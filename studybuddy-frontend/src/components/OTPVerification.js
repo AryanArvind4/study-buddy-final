@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 
+// API Base URL - use environment variable or default to production
+const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+
 function OTPVerification({ email, onVerified, onBack, purpose = 'registration' }) {
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
@@ -7,7 +10,6 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration' }
   const [success, setSuccess] = useState('');
   const [timeLeft, setTimeLeft] = useState(600); // 10 minutes in seconds
   const [canResend, setCanResend] = useState(false);
-  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     const timer = setInterval(() => {

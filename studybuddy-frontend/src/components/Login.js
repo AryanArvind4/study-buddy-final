@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import OTPVerification from './OTPVerification';
 
+// API Base URL - use environment variable or default to production
+const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+
 function Login() {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
@@ -28,8 +31,6 @@ function Login() {
     setLoading(true);
     
     // First, send OTP to verify it's really the user
-    const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
-    
     fetch(`${API_BASE}/send_otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -56,8 +57,6 @@ function Login() {
   function handleOTPVerified() {
     // After OTP is verified, complete the login
     setLoading(true);
-    
-    const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
     
     fetch(`${API_BASE}/login`, {
       method: 'POST',

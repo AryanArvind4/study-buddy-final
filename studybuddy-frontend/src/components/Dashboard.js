@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 
+// API Base URL - use environment variable or default to production
+const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+
 function Dashboard() {
   const [user, setUser] = useState(null);
   const [stats, setStats] = useState({ totalStudents: 0, coursesCount: 0, spotsCount: 0 });
   const [loading, setLoading] = useState(true);
   const [courseNames, setCourseNames] = useState({});
-  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     async function fetchData() {

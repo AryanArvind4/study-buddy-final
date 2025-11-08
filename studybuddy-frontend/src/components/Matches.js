@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
 
+// API Base URL - use environment variable or default to production
+const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+
 function Matches() {
   const [matches, setMatches] = useState([]);
   const [user, setUser] = useState(null);
@@ -8,7 +11,6 @@ function Matches() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState('');
-  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     async function fetchData() {

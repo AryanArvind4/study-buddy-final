@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import OTPVerification from './OTPVerification';
 
+// API Base URL - use environment variable or default to production
+const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+
 function Register() {
   const [form, setForm] = useState({
     name: '',
@@ -23,7 +26,6 @@ function Register() {
   const [showCourseDropdown, setShowCourseDropdown] = useState(false);
   const [step, setStep] = useState('form'); // 'form', 'otp', 'success'
   const [pendingRegistration, setPendingRegistration] = useState(null);
-  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     fetch(`${API_BASE}/get_options`)
