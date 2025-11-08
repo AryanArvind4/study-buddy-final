@@ -1,9 +1,8 @@
 flask
-pymongo[srv]
+pymongo[srv]>=4.3.3
 python-dotenv
 scikit-learn
 xgboost
 flask-mail
 flask-cors
 gunicorn
-certifi

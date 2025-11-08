@@ -15,47 +15,33 @@ import string
 
 load_dotenv()
 
-# Setup MongoDB connection with SSL certificate handling
+# Setup MongoDB connection (Modern PyMongo 4.x approach)
 MONGO_URI = os.getenv("MONGO_URI")
-print(f"🔄 Connecting to MongoDB...")
+print(f"🔄 Connecting to MongoDB Atlas...")
 print(f"URI: {MONGO_URI[:50]}..." if MONGO_URI and len(MONGO_URI) > 50 else f"URI: {MONGO_URI}")
 
 try:
-    import certifi
-    import ssl
-    
-    # Try with explicit SSL context first
-    print("Attempting connection with explicit SSL configuration...")
+    # Modern PyMongo 4.x connection with TLS parameters
+    # Uses tls=True and tlsAllowInvalidCertificates=True for cloud platform compatibility
     client = MongoClient(
         MONGO_URI,
-        serverSelectionTimeoutMS=15000,  # 15 second timeout
-        connectTimeoutMS=15000,
-        socketTimeoutMS=15000,
-        tlsCAFile=certifi.where(),  # Use certifi SSL certificates
-        ssl=True,  # Explicitly enable SSL
-        ssl_cert_reqs=ssl.CERT_REQUIRED  # Require valid certificates
+        tls=True,  # Enable TLS (required for MongoDB Atlas)
+        tlsAllowInvalidCertificates=True,  # Bypass strict SSL validation for cloud platforms
+        serverSelectionTimeoutMS=20000,
+        connectTimeoutMS=20000,
+        socketTimeoutMS=20000
     )
     # Test the connection
     client.server_info()
-    print("✅ MongoDB connected successfully with SSL!")
+    print("✅ MongoDB connected successfully!")
 except Exception as e:
-    print(f"⚠️ First connection attempt failed: {e}")
-    print("Trying alternative SSL configuration...")
-    try:
-        # Fallback: Try with tlsAllowInvalidCertificates for Render compatibility
-        client = MongoClient(
-            MONGO_URI,
-            serverSelectionTimeoutMS=15000,
-            connectTimeoutMS=15000,
-            socketTimeoutMS=15000,
-            tlsAllowInvalidCertificates=True  # Allow invalid certs as fallback
-        )
-        client.server_info()
-        print("✅ MongoDB connected successfully with relaxed SSL!")
-    except Exception as e2:
-        print(f"❌ MongoDB connection failed with both methods: {e2}")
-        print("Please check your MONGO_URI and network connectivity")
-        exit(1)
+    print(f"❌ MongoDB connection failed: {e}")
+    print("\n🔍 Troubleshooting:")
+    print("1. Check if your IP is whitelisted in MongoDB Atlas (try 0.0.0.0/0 for testing)")
+    print("2. Verify your MONGO_URI credentials are correct")
+    print("3. Ensure your MongoDB URI includes: ?retryWrites=true&w=majority&tls=true")
+    print("4. Make sure you're using Python 3.9+ and pymongo>=4.3.3")
+    exit(1)
 
 db = client["study_partner"]
 students_collection = db["students"]
