@@ -15,18 +15,22 @@ import string
 
 load_dotenv()
 
-# Setup MongoDB connection (Modern PyMongo 4.x approach)
+# Setup MongoDB connection
 MONGO_URI = os.getenv("MONGO_URI")
 print(f"🔄 Connecting to MongoDB Atlas...")
 print(f"URI: {MONGO_URI[:50]}..." if MONGO_URI and len(MONGO_URI) > 50 else f"URI: {MONGO_URI}")
 
+# Ensure URI has tlsAllowInvalidCertificates parameter for Render compatibility
+if MONGO_URI:
+    if "tlsAllowInvalidCertificates" not in MONGO_URI:
+        separator = "&" if "?" in MONGO_URI else "?"
+        MONGO_URI = f"{MONGO_URI}{separator}tls=true&tlsAllowInvalidCertificates=true"
+        print("Added TLS parameters to connection string")
+
 try:
-    # Modern PyMongo 4.x connection with TLS parameters
-    # Uses tls=True and tlsAllowInvalidCertificates=True for cloud platform compatibility
+    # Simplified connection - let the URI parameters handle all TLS settings
     client = MongoClient(
         MONGO_URI,
-        tls=True,  # Enable TLS (required for MongoDB Atlas)
-        tlsAllowInvalidCertificates=True,  # Bypass strict SSL validation for cloud platforms
         serverSelectionTimeoutMS=20000,
         connectTimeoutMS=20000,
         socketTimeoutMS=20000
@@ -37,10 +41,9 @@ try:
 except Exception as e:
     print(f"❌ MongoDB connection failed: {e}")
     print("\n🔍 Troubleshooting:")
-    print("1. Check if your IP is whitelisted in MongoDB Atlas (try 0.0.0.0/0 for testing)")
-    print("2. Verify your MONGO_URI credentials are correct")
-    print("3. Ensure your MongoDB URI includes: ?retryWrites=true&w=majority&tls=true")
-    print("4. Make sure you're using Python 3.9+ and pymongo>=4.3.3")
+    print("1. Check MongoDB Atlas Network Access - whitelist 0.0.0.0/0")
+    print("2. Verify credentials in MONGO_URI")
+    print("3. Current URI format:", MONGO_URI[:80] if MONGO_URI else "None")
     exit(1)
 
 db = client["study_partner"]
