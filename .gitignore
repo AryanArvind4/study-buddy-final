@@ -1,0 +1,22 @@
+
+# Temporary files
+*.pid
+*.log
+backend/.env
+__pycache__/
+.env
+
+# Virtual environment
+venv/
+backend/venv/
+
+# Node modules
+node_modules/
+studybuddy-frontend/node_modules/
+
+# Build files
+studybuddy-frontend/build/
+
+# Cache
+.cache/
+*.pyc
