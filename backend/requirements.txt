@@ -5,3 +5,4 @@ scikit-learn
 xgboost
 flask-mail
 flask-cors
+gunicorn
