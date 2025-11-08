@@ -58,6 +58,7 @@ app = Flask(__name__)
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "https://study-buddy-final-orcin.vercel.app",  # Primary Vercel domain
     os.getenv("FRONTEND_URL", "http://localhost:3000")
 ]
 
@@ -72,8 +73,10 @@ def is_allowed_origin(origin):
 CORS(app, 
      supports_credentials=True, 
      origins=is_allowed_origin,
-     allow_headers=["Content-Type"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     expose_headers=["Content-Type"],
+     max_age=3600
 )
 
 # Development secret key
