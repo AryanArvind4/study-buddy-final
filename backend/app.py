@@ -7,7 +7,6 @@ from bson import ObjectId
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from datetime import datetime, timedelta
-from flask_cors import CORS
 from functools import wraps
 import re
 import random
@@ -54,19 +53,9 @@ otp_collection = db["otps"]  # New collection for storing OTPs
 # Initialize Flask app
 app = Flask(__name__)
 
-# CORS configuration - allow all origins (we'll filter in after_request)
-CORS(app, 
-     supports_credentials=True,
-     origins="*",
-     allow_headers=["Content-Type", "Authorization"],
-     expose_headers=["Content-Type"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     max_age=3600
-)
-
-# Custom CORS handler to allow specific origins with credentials
+# Manual CORS handler - allows all Vercel domains and localhost
 @app.after_request
-def after_request(response):
+def add_cors_headers(response):
     origin = request.headers.get('Origin')
     
     # Allow localhost and any Vercel domain
@@ -80,8 +69,29 @@ def after_request(response):
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Max-Age'] = '3600'
+        response.headers['Vary'] = 'Origin'
     
     return response
+
+# Handle preflight OPTIONS requests
+@app.before_request
+def handle_preflight():
+    if request.method == 'OPTIONS':
+        response = app.make_default_options_response()
+        origin = request.headers.get('Origin')
+        
+        if origin and (
+            origin.startswith('http://localhost:') or
+            origin.startswith('http://127.0.0.1:') or
+            '.vercel.app' in origin
+        ):
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            response.headers['Access-Control-Max-Age'] = '3600'
+        
+        return response
 
 # Session configuration
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "b7328b8e99a64cc38dc6b1b52d4f553a")
