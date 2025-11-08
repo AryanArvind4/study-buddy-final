@@ -7,6 +7,7 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration' }
   const [success, setSuccess] = useState('');
   const [timeLeft, setTimeLeft] = useState(600); // 10 minutes in seconds
   const [canResend, setCanResend] = useState(false);
+  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -41,7 +42,7 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration' }
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:5001/verify_otp', {
+      const response = await fetch(`${API_BASE}/verify_otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -72,7 +73,7 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration' }
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:5001/send_otp', {
+      const response = await fetch(`${API_BASE}/send_otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

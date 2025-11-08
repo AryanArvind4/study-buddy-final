@@ -23,9 +23,10 @@ function Register() {
   const [showCourseDropdown, setShowCourseDropdown] = useState(false);
   const [step, setStep] = useState('form'); // 'form', 'otp', 'success'
   const [pendingRegistration, setPendingRegistration] = useState(null);
+  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
-    fetch('http://localhost:5001/get_options')
+    fetch(`${API_BASE}/get_options`)
       .then(res => res.json())
       .then(data => {
         setColleges(data.colleges || []);
@@ -65,7 +66,7 @@ function Register() {
     setCourseSearch(query);
     
     if (query.length >= 2) {
-      fetch(`http://localhost:5001/search_courses?q=${encodeURIComponent(query)}`)
+      fetch(`${API_BASE}/search_courses?q=${encodeURIComponent(query)}`)
         .then(res => res.json())
         .then(data => {
           setSearchResults(data.courses || []);
@@ -119,7 +120,7 @@ function Register() {
     setLoading(true);
     
     // First, send OTP to verify email
-    fetch('http://localhost:5001/send_otp', {
+    fetch(`${API_BASE}/send_otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -151,7 +152,7 @@ function Register() {
     // After OTP is verified, proceed with registration
     setLoading(true);
     
-    fetch('http://localhost:5001/register', {
+    fetch(`${API_BASE}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',

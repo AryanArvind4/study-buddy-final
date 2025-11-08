@@ -8,7 +8,7 @@ function Matches() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState('');
-  const API_BASE = 'http://localhost:5001';
+  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     async function fetchData() {

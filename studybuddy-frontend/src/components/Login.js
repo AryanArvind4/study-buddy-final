@@ -28,7 +28,9 @@ function Login() {
     setLoading(true);
     
     // First, send OTP to verify it's really the user
-    fetch('http://localhost:5001/send_otp', {
+    const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+    
+    fetch(`${API_BASE}/send_otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -55,7 +57,9 @@ function Login() {
     // After OTP is verified, complete the login
     setLoading(true);
     
-    fetch('http://localhost:5001/login', {
+    const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+    
+    fetch(`${API_BASE}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',

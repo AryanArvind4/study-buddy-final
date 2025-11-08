@@ -5,7 +5,7 @@ function Dashboard() {
   const [stats, setStats] = useState({ totalStudents: 0, coursesCount: 0, spotsCount: 0 });
   const [loading, setLoading] = useState(true);
   const [courseNames, setCourseNames] = useState({});
-  const API_BASE = 'http://localhost:5001';
+  const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
 
   useEffect(() => {
     async function fetchData() {

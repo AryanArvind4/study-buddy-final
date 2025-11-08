@@ -53,11 +53,28 @@ otp_collection = db["otps"]  # New collection for storing OTPs
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, supports_credentials=True, origins=[
+
+# CORS configuration - allow localhost and Vercel domains
+allowed_origins = [
     "http://localhost:3000",
-    "https://*.vercel.app",
+    "http://localhost:3001",
     os.getenv("FRONTEND_URL", "http://localhost:3000")
-])
+]
+
+# Allow any vercel.app domain
+def is_allowed_origin(origin):
+    if origin in allowed_origins:
+        return True
+    if origin and ".vercel.app" in origin:
+        return True
+    return False
+
+CORS(app, 
+     supports_credentials=True, 
+     origins=is_allowed_origin,
+     allow_headers=["Content-Type"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
 
 # Development secret key
 app.config["SECRET_KEY"] = "b7328b8e99a64cc38dc6b1b52d4f553a"
