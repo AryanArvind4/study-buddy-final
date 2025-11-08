@@ -15,16 +15,18 @@ import string
 
 load_dotenv()
 
-# Setup MongoDB connection with timeout to prevent hanging
+# Setup MongoDB connection with SSL certificate handling
 MONGO_URI = os.getenv("MONGO_URI")
 print(f"🔄 Connecting to MongoDB...")
 print(f"URI: {MONGO_URI[:50]}..." if MONGO_URI and len(MONGO_URI) > 50 else f"URI: {MONGO_URI}")
 
 try:
+    import certifi
     client = MongoClient(
         MONGO_URI,
-        serverSelectionTimeoutMS=5000,  # 5 second timeout
-        connectTimeoutMS=5000
+        serverSelectionTimeoutMS=10000,  # 10 second timeout
+        connectTimeoutMS=10000,
+        tlsCAFile=certifi.where()  # Use certifi SSL certificates
     )
     # Test the connection
     client.server_info()
