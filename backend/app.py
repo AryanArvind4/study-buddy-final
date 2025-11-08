@@ -79,8 +79,13 @@ CORS(app,
      max_age=3600
 )
 
-# Development secret key
-app.config["SECRET_KEY"] = "b7328b8e99a64cc38dc6b1b52d4f553a"
+# Session configuration
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "b7328b8e99a64cc38dc6b1b52d4f553a")
+app.config["SESSION_COOKIE_SECURE"] = True  # Only send cookies over HTTPS
+app.config["SESSION_COOKIE_HTTPONLY"] = True  # Prevent JavaScript access to session cookie
+app.config["SESSION_COOKIE_SAMESITE"] = "None"  # Allow cross-site cookies for CORS
+app.config["SESSION_COOKIE_DOMAIN"] = None  # Allow cookies from any domain
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
 
 # Email configuration for OTP verification
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
@@ -729,6 +734,23 @@ def get_matches(student_id):
     except Exception as e:
         return jsonify({"error": f"Error computing matches: {str(e)}"}), 500
 
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Endpoint not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal server error", "message": str(error)}), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    # Log the error for debugging
+    print(f"Unhandled exception: {error}")
+    import traceback
+    traceback.print_exc()
+    return jsonify({"error": "An unexpected error occurred", "message": str(error)}), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
