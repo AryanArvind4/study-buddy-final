@@ -11,6 +11,7 @@ from functools import wraps
 import re
 import random
 import string
+import threading
 
 load_dotenv()
 
@@ -327,64 +328,80 @@ def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
 
 
-def send_otp_email(email, otp):
-    """Send OTP via email (or print to console if email is disabled)"""
-    # If mail is not configured, print OTP to console instead
-    if mail is None:
-        print("\n" + "="*60, flush=True)
-        print(f"📧 [DEV MODE] OTP for {email}: {otp}", flush=True)
-        print("="*60 + "\n", flush=True)
-        # Also write to a temporary file for easy access
-        import sys
-        sys.stderr.write(f"\n{'='*60}\n")
-        sys.stderr.write(f"📧 OTP for {email}: {otp}\n")
-        sys.stderr.write(f"{'='*60}\n\n")
-        sys.stderr.flush()
-        return True
-    
-    try:
-        msg = Message(
-            subject='StudyBuddy - Email Verification Code',
-            recipients=[email],
-            html=f"""
-            <html>
-                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <div style="background-color: #6366f1; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-                        <h1 style="margin: 0; font-size: 28px;">StudyBuddy</h1>
-                        <p style="margin: 10px 0 0 0; font-size: 16px;">Email Verification</p>
-                    </div>
-                    
-                    <div style="background-color: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e9ecef;">
-                        <h2 style="color: #333; margin-top: 0;">Verify Your NTHU Email</h2>
-                        
-                        <p style="color: #666; font-size: 16px; line-height: 1.5;">
-                            Thank you for joining StudyBuddy! To complete your registration, please use the verification code below:
-                        </p>
-                        
-                        <div style="background-color: white; border: 2px solid #6366f1; border-radius: 8px; padding: 20px; text-align: center; margin: 25px 0;">
-                            <span style="font-size: 32px; font-weight: bold; color: #6366f1; letter-spacing: 5px;">{otp}</span>
+def send_otp_email_async(email, otp):
+    """Send OTP via email asynchronously in a separate thread"""
+    def send_email():
+        try:
+            msg = Message(
+                subject='StudyBuddy - Email Verification Code',
+                recipients=[email],
+                html=f"""
+                <html>
+                    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="background-color: #6366f1; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                            <h1 style="margin: 0; font-size: 28px;">StudyBuddy</h1>
+                            <p style="margin: 10px 0 0 0; font-size: 16px;">Email Verification</p>
                         </div>
                         
-                        <p style="color: #666; font-size: 14px; line-height: 1.5;">
-                            This code will expire in <strong>10 minutes</strong>. If you didn't request this verification, please ignore this email.
-                        </p>
-                        
-                        <hr style="border: none; border-top: 1px solid #e9ecef; margin: 25px 0;">
-                        
-                        <p style="color: #999; font-size: 12px; text-align: center;">
-                            This is an automated message from StudyBuddy. Please do not reply to this email.
-                        </p>
-                    </div>
-                </body>
-            </html>
-            """
-        )
-        mail.send(msg)
-        print(f"✅ Email sent successfully to {email}", flush=True)
-        return True
-    except Exception as e:
-        print(f"❌ Error sending email: {str(e)}", flush=True)
-        return False
+                        <div style="background-color: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e9ecef;">
+                            <h2 style="color: #333; margin-top: 0;">Verify Your NTHU Email</h2>
+                            
+                            <p style="color: #666; font-size: 16px; line-height: 1.5;">
+                                Thank you for joining StudyBuddy! To complete your registration, please use the verification code below:
+                            </p>
+                            
+                            <div style="background-color: white; border: 2px solid #6366f1; border-radius: 8px; padding: 20px; text-align: center; margin: 25px 0;">
+                                <span style="font-size: 32px; font-weight: bold; color: #6366f1; letter-spacing: 5px;">{otp}</span>
+                            </div>
+                            
+                            <p style="color: #666; font-size: 14px; line-height: 1.5;">
+                                This code will expire in <strong>10 minutes</strong>. If you didn't request this verification, please ignore this email.
+                            </p>
+                            
+                            <hr style="border: none; border-top: 1px solid #e9ecef; margin: 25px 0;">
+                            
+                            <p style="color: #999; font-size: 12px; text-align: center;">
+                                This is an automated message from StudyBuddy. Please do not reply to this email.
+                            </p>
+                        </div>
+                    </body>
+                </html>
+                """
+            )
+            with app.app_context():
+                mail.send(msg)
+                print(f"✅ Email sent successfully to {email}", flush=True)
+        except Exception as e:
+            print(f"❌ Error sending email: {str(e)}", flush=True)
+    
+    # Start email sending in background thread
+    thread = threading.Thread(target=send_email)
+    thread.daemon = True
+    thread.start()
+
+def send_otp_email(email, otp):
+    """Send OTP via email - always prints to console and tries email async"""
+    # Always print OTP to console/logs as backup
+    print("\n" + "="*80, flush=True)
+    print(f"📧 OTP for {email}: {otp}", flush=True)
+    print(f"⏰ Valid for 10 minutes", flush=True)
+    print("="*80 + "\n", flush=True)
+    
+    # Also write to stderr for visibility
+    import sys
+    sys.stderr.write(f"\n{'='*80}\n")
+    sys.stderr.write(f"📧 OTP for {email}: {otp}\n")
+    sys.stderr.write(f"⏰ Valid for 10 minutes\n")
+    sys.stderr.write(f"{'='*80}\n\n")
+    sys.stderr.flush()
+    
+    # Try to send email asynchronously (non-blocking)
+    if mail is not None:
+        print(f"📤 Attempting to send email to {email} in background...", flush=True)
+        send_otp_email_async(email, otp)
+    
+    # Always return True immediately (don't wait for email)
+    return True
 
 
 def store_otp(email, otp):
