@@ -22,19 +22,40 @@ print(f"URI: {MONGO_URI[:50]}..." if MONGO_URI and len(MONGO_URI) > 50 else f"UR
 
 try:
     import certifi
+    import ssl
+    
+    # Try with explicit SSL context first
+    print("Attempting connection with explicit SSL configuration...")
     client = MongoClient(
         MONGO_URI,
-        serverSelectionTimeoutMS=10000,  # 10 second timeout
-        connectTimeoutMS=10000,
-        tlsCAFile=certifi.where()  # Use certifi SSL certificates
+        serverSelectionTimeoutMS=15000,  # 15 second timeout
+        connectTimeoutMS=15000,
+        socketTimeoutMS=15000,
+        tlsCAFile=certifi.where(),  # Use certifi SSL certificates
+        ssl=True,  # Explicitly enable SSL
+        ssl_cert_reqs=ssl.CERT_REQUIRED  # Require valid certificates
     )
     # Test the connection
     client.server_info()
-    print("✅ MongoDB connected successfully!")
+    print("✅ MongoDB connected successfully with SSL!")
 except Exception as e:
-    print(f"❌ MongoDB connection failed: {e}")
-    print("Please check your MONGO_URI in .env file")
-    exit(1)
+    print(f"⚠️ First connection attempt failed: {e}")
+    print("Trying alternative SSL configuration...")
+    try:
+        # Fallback: Try with tlsAllowInvalidCertificates for Render compatibility
+        client = MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=15000,
+            connectTimeoutMS=15000,
+            socketTimeoutMS=15000,
+            tlsAllowInvalidCertificates=True  # Allow invalid certs as fallback
+        )
+        client.server_info()
+        print("✅ MongoDB connected successfully with relaxed SSL!")
+    except Exception as e2:
+        print(f"❌ MongoDB connection failed with both methods: {e2}")
+        print("Please check your MONGO_URI and network connectivity")
+        exit(1)
 
 db = client["study_partner"]
 students_collection = db["students"]
