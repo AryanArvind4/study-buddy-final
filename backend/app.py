@@ -54,23 +54,28 @@ otp_collection = db["otps"]  # New collection for storing OTPs
 # Initialize Flask app
 app = Flask(__name__)
 
-# CORS configuration - allow localhost and all Vercel domains
+# Custom CORS origin checker - allow all Vercel domains and localhost
+def check_origin(origin):
+    """Allow requests from localhost and any Vercel domain"""
+    if not origin:
+        return False
+    
+    allowed_patterns = [
+        "http://localhost:",
+        "http://127.0.0.1:",
+        ".vercel.app"
+    ]
+    
+    return any(pattern in origin for pattern in allowed_patterns)
+
+# CORS configuration - allow localhost and all Vercel domains dynamically
 CORS(app, 
      supports_credentials=True,
-     resources={r"/*": {
-         "origins": [
-             "http://localhost:3000",
-             "http://localhost:3001",
-             "https://study-buddy-final-orcin.vercel.app",
-             "https://study-buddy-final-orcin-aryans-projects-a94e56f2.vercel.app",
-             r"https://.*\.vercel\.app$"  # Allow any Vercel domain
-         ],
-         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         "allow_headers": ["Content-Type", "Authorization"],
-         "expose_headers": ["Content-Type"],
-         "supports_credentials": True,
-         "max_age": 3600
-     }}
+     origins=check_origin,
+     allow_headers=["Content-Type", "Authorization"],
+     expose_headers=["Content-Type"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     max_age=3600
 )
 
 # Session configuration
