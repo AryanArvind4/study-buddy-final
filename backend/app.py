@@ -59,11 +59,12 @@ app = Flask(__name__)
 def add_cors_headers(response):
     origin = request.headers.get('Origin')
     
-    # Allow localhost and any Vercel domain
+    # Allow localhost, Vercel domains, and the new custom domain
     if origin and (
         origin.startswith('http://localhost:') or
         origin.startswith('http://127.0.0.1:') or
-        '.vercel.app' in origin
+        '.vercel.app' in origin or
+        'studybuddynthu.org' in origin
     ):
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Credentials'] = 'true'
@@ -84,7 +85,8 @@ def handle_preflight():
         if origin and (
             origin.startswith('http://localhost:') or
             origin.startswith('http://127.0.0.1:') or
-            '.vercel.app' in origin
+            '.vercel.app' in origin or
+            'studybuddynthu.org' in origin
         ):
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
@@ -101,6 +103,8 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True  # Prevent JavaScript access to ses
 app.config["SESSION_COOKIE_SAMESITE"] = "None"  # Allow cross-site cookies for CORS
 app.config["SESSION_COOKIE_DOMAIN"] = None  # Allow cookies from any domain
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
+app.config["SESSION_COOKIE_PATH"] = "/"  # Cookies available for all paths
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True  # Refresh session on each request
 
 # Email configuration for OTP verification
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
@@ -330,9 +334,18 @@ def generate_otp():
 
 def send_otp_email_async(app_instance, email, otp):
     """Send OTP via email asynchronously in a separate thread with app context"""
+    import socket
+    import smtplib
+    
     def send_email():
+        print(f"🔄 Background email thread started for {email}", flush=True)
         try:
             with app_instance.app_context():
+                print(f"🔗 Connecting to Gmail SMTP server...", flush=True)
+                
+                # Set socket timeout to prevent hanging
+                socket.setdefaulttimeout(30)
+                
                 msg = Message(
                     subject='StudyBuddy - Email Verification Code',
                     recipients=[email],
@@ -369,12 +382,24 @@ def send_otp_email_async(app_instance, email, otp):
                     </html>
                     """
                 )
+                
+                print(f"📧 Sending email via Flask-Mail...", flush=True)
                 mail.send(msg)
-                print(f"✅ Email sent successfully to {email}", flush=True)
+                print(f"✅ Email sent successfully to {email}!", flush=True)
+                
+        except socket.timeout:
+            print(f"❌ Email sending timed out after 30s for {email}", flush=True)
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"❌ SMTP Authentication failed: {str(e)}", flush=True)
+            print(f"⚠️ Check your MAIL_USERNAME and MAIL_PASSWORD in Render env vars", flush=True)
+        except smtplib.SMTPException as e:
+            print(f"❌ SMTP Error: {str(e)}", flush=True)
         except Exception as e:
-            print(f"❌ Error sending email: {str(e)}", flush=True)
+            print(f"❌ Unexpected error sending email: {str(e)}", flush=True)
             import traceback
             traceback.print_exc()
+        finally:
+            print(f"🏁 Background email thread finished for {email}", flush=True)
     
     # Start email sending in background thread
     thread = threading.Thread(target=send_email)
@@ -494,6 +519,7 @@ def login():
         return jsonify({"error": "No account found with this NTHU email. Please register first."}), 401
     
     # Create session and login (frontend should call this AFTER OTP verification)
+    session.permanent = True  # Make session persistent (better for mobile)
     session["user_id"] = str(user["_id"])
     session["user_email"] = user["email"]
     session["user_name"] = user["name"]
