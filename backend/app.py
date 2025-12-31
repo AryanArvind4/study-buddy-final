@@ -12,6 +12,8 @@ import re
 import random
 import string
 import threading
+import requests
+import json
 
 load_dotenv()
 
@@ -792,6 +794,294 @@ def get_matches(student_id):
         return jsonify({"target_student": target["name"], "matches": top_matches, "total_checked": len(others)})
     except Exception as e:
         return jsonify({"error": f"Error computing matches: {str(e)}"}), 500
+
+
+@app.route("/send_partner_email", methods=["POST"])
+@login_required
+def send_partner_email():
+    """Send an email to a potential study partner"""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        # Get the current user
+        current_user = students_collection.find_one({"_id": ObjectId(user_id)})
+        if not current_user:
+            return jsonify({"error": "User not found"}), 404
+        
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        partner_email = data.get("partner_email", "").strip()
+        partner_name = data.get("partner_name", "").strip()
+        shared_courses = data.get("shared_courses", [])
+        shared_spots = data.get("shared_spots", [])
+        shared_times = data.get("shared_times", [])
+        
+        if not partner_email:
+            return jsonify({"error": "Partner email is required"}), 400
+        
+        # Validate partner email is NTHU
+        if not is_valid_nthu_email(partner_email):
+            return jsonify({"error": "Invalid partner email"}), 400
+        
+        # Format shared items for email
+        shared_courses_str = ", ".join(shared_courses) if shared_courses else "various courses"
+        shared_spots_str = ", ".join(shared_spots) if shared_spots else "study locations"
+        shared_times_str = ", ".join(shared_times) if shared_times else "study times"
+        
+        # Build email content
+        sender_name = current_user.get("name", "A fellow student")
+        sender_email = current_user.get("email", "")
+        sender_department = current_user.get("department", "")
+        
+        subject = f"🎓 Study Partner Request from {sender_name} - StudyBuddy"
+        
+        # Build the shared items section
+        shared_items_html = ""
+        if shared_courses:
+            shared_items_html += f"<li><strong>Shared Courses:</strong> {shared_courses_str}</li>"
+        if shared_spots:
+            shared_items_html += f"<li><strong>Preferred Study Spots:</strong> {shared_spots_str}</li>"
+        if shared_times:
+            shared_items_html += f"<li><strong>Available Study Times:</strong> {shared_times_str}</li>"
+        
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
+            <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                <h1 style="color: white; margin: 0; font-size: 28px;">📚 StudyBuddy</h1>
+                <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Study Partner Connection</p>
+            </div>
+            
+            <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
+                <h2 style="color: #1f2937; margin-top: 0;">Hi {partner_name}! 👋</h2>
+                
+                <p style="font-size: 16px;">
+                    <strong>{sender_name}</strong> from <strong>{sender_department}</strong> found your profile on StudyBuddy and would like to connect with you as a study partner!
+                </p>
+                
+                <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                    <h3 style="margin-top: 0; color: #6366f1;">🤝 What You Have in Common:</h3>
+                    <ul style="margin: 0; padding-left: 20px;">
+                        {shared_items_html if shared_items_html else "<li>Similar academic interests and study preferences</li>"}
+                    </ul>
+                </div>
+                
+                <p style="font-size: 16px;">
+                    {sender_name} thinks you'd be great study partners! You could help each other with coursework, prepare for exams, or just have productive study sessions together.
+                </p>
+                
+                <div style="background: #eff6ff; padding: 15px; border-radius: 8px; border-left: 4px solid #6366f1; margin: 20px 0;">
+                    <p style="margin: 0; font-size: 14px;">
+                        <strong>💬 To respond:</strong> Simply reply to this email to get in touch with {sender_name}!
+                    </p>
+                </div>
+                
+                <p style="color: #6b7280; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    This message was sent via <strong>StudyBuddy</strong> - the study partner matching platform for NTHU students.<br>
+                    <a href="https://studybuddynthu.org" style="color: #6366f1;">studybuddynthu.org</a>
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        plain_body = f"""
+Hi {partner_name}!
+
+{sender_name} from {sender_department} found your profile on StudyBuddy and would like to connect with you as a study partner!
+
+What You Have in Common:
+- Shared Courses: {shared_courses_str}
+- Preferred Study Spots: {shared_spots_str}
+- Available Study Times: {shared_times_str}
+
+{sender_name} thinks you'd be great study partners! You could help each other with coursework, prepare for exams, or just have productive study sessions together.
+
+To respond: Simply reply to this email to get in touch with {sender_name}!
+
+---
+This message was sent via StudyBuddy - the study partner matching platform for NTHU students.
+https://studybuddynthu.org
+        """
+        
+        # Send the email
+        try:
+            msg = Message(
+                subject=subject,
+                recipients=[partner_email],
+                body=plain_body,
+                html=html_body,
+                reply_to=sender_email  # KEY: Replies go to the sender, not StudyBuddy
+            )
+            mail.send(msg)
+            
+            print(f"✅ Partner email sent from {sender_email} to {partner_email}")
+            return jsonify({
+                "message": "Email sent successfully! Your study partner will receive your connection request.",
+                "sent_to": partner_email
+            }), 200
+            
+        except Exception as email_error:
+            print(f"❌ Error sending partner email: {email_error}")
+            return jsonify({"error": "Failed to send email. Please try again later."}), 500
+        
+    except Exception as e:
+        print(f"Error in send_partner_email: {e}")
+        return jsonify({"error": f"Error sending email: {str(e)}"}), 500
+
+
+@app.route("/update_courses_from_nthu", methods=["POST"])
+@login_required
+def update_courses_from_nthu():
+    """Fetch latest course data from NTHU's live JSON endpoint and update database"""
+    try:
+        NTHU_COURSE_URL = "https://www.ccxp.nthu.edu.tw/ccxp/INQUIRE/JH/OPENDATA/open_course_data.json"
+        
+        print(f"🔄 Fetching course data from NTHU...")
+        response = requests.get(NTHU_COURSE_URL, timeout=30)
+        
+        if response.status_code != 200:
+            return jsonify({"error": f"Failed to fetch from NTHU: {response.status_code}"}), 500
+        
+        # Parse JSON data
+        courses_data = response.json()
+        
+        if not isinstance(courses_data, list):
+            return jsonify({"error": "Invalid course data format from NTHU"}), 500
+        
+        # Process and update courses
+        updated_count = 0
+        new_count = 0
+        
+        for course in courses_data:
+            if not isinstance(course, dict):
+                continue
+                
+            # NTHU JSON uses Chinese field names
+            course_code = course.get('科號', '').strip()
+            course_name_zh = course.get('課程中文名稱', '').strip()
+            course_name_en = course.get('課程英文名稱', '').strip()
+            
+            if not course_code or not course_name_zh:
+                continue
+            
+            # Create course document
+            course_doc = {
+                "code": course_code,
+                "name_zh": course_name_zh,
+                "name_en": course_name_en,
+                "display": f"{course_code} - {course_name_zh}",
+                "updated_at": datetime.utcnow()
+            }
+            
+            # Upsert course (update if exists, insert if new)
+            result = courses_collection.update_one(
+                {"code": course_code},
+                {"$set": course_doc},
+                upsert=True
+            )
+            
+            if result.upserted_id:
+                new_count += 1
+            elif result.modified_count > 0:
+                updated_count += 1
+        
+        total_courses = courses_collection.count_documents({})
+        
+        print(f"✅ Course update complete: {new_count} new, {updated_count} updated, {total_courses} total")
+        
+        return jsonify({
+            "message": "Courses updated successfully from NTHU",
+            "new_courses": new_count,
+            "updated_courses": updated_count,
+            "total_courses": total_courses
+        }), 200
+        
+    except requests.Timeout:
+        return jsonify({"error": "Timeout fetching from NTHU server"}), 500
+    except Exception as e:
+        print(f"❌ Error updating courses: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Error updating courses: {str(e)}"}), 500
+
+
+@app.route("/update_profile", methods=["PUT"])
+@login_required
+def update_profile():
+    """Update user profile - courses, study spots, and study times"""
+    try:
+        user_id = session.get("user_id")
+        if not user_id:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Build update document with only allowed fields
+        update_fields = {}
+        
+        # Update courses if provided
+        if "course_ids" in data:
+            course_ids = data["course_ids"]
+            if not isinstance(course_ids, list):
+                return jsonify({"error": "course_ids must be a list"}), 400
+            update_fields["course_ids"] = course_ids
+        
+        # Update study spots if provided
+        if "study_spots" in data:
+            study_spots = data["study_spots"]
+            if not isinstance(study_spots, list):
+                return jsonify({"error": "study_spots must be a list"}), 400
+            # Validate study spots against allowed values
+            for spot in study_spots:
+                if spot not in STUDY_SPOTS:
+                    return jsonify({"error": f"Invalid study spot: {spot}"}), 400
+            update_fields["study_spots"] = study_spots
+        
+        # Update study times if provided
+        if "study_times" in data:
+            study_times = data["study_times"]
+            if not isinstance(study_times, list):
+                return jsonify({"error": "study_times must be a list"}), 400
+            # Validate study times against allowed values
+            for time in study_times:
+                if time not in STUDY_TIMES:
+                    return jsonify({"error": f"Invalid study time: {time}"}), 400
+            update_fields["study_times"] = study_times
+        
+        if not update_fields:
+            return jsonify({"error": "No valid fields to update"}), 400
+        
+        # Add updated_at timestamp
+        update_fields["updated_at"] = datetime.utcnow()
+        
+        # Update the user in database
+        result = students_collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": update_fields}
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Fetch and return updated user data
+        updated_user = students_collection.find_one({"_id": ObjectId(user_id)})
+        updated_user["_id"] = str(updated_user["_id"])
+        
+        return jsonify({
+            "message": "Profile updated successfully",
+            "user": updated_user
+        }), 200
+        
+    except Exception as e:
+        print(f"Error updating profile: {e}")
+        return jsonify({"error": f"Error updating profile: {str(e)}"}), 500
 
 
 # Error handlers

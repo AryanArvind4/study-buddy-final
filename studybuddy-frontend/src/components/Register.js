@@ -100,6 +100,18 @@ function Register() {
     }));
   }
 
+  function handleManualCourseEntry() {
+    const courseName = courseSearch.trim();
+    if (courseName && !form.selectedCourses.includes(courseName)) {
+      setForm(prev => ({ 
+        ...prev, 
+        selectedCourses: [...prev.selectedCourses, courseName] 
+      }));
+    }
+    setCourseSearch('');
+    setShowCourseDropdown(false);
+  }
+
 
   function validateNTHUEmail(email) {
     return email && email.trim().toLowerCase().endsWith('.nthu.edu.tw');
@@ -296,6 +308,12 @@ function Register() {
               value={courseSearch}
               onChange={handleCourseSearch}
               onFocus={() => showCourseDropdown && setShowCourseDropdown(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && courseSearch.trim() && searchResults.length === 0) {
+                  e.preventDefault();
+                  handleManualCourseEntry();
+                }
+              }}
             />
             {showCourseDropdown && searchResults.length > 0 && (
               <div className="course-dropdown">
@@ -311,7 +329,31 @@ function Register() {
                 ))}
               </div>
             )}
+            {showCourseDropdown && courseSearch.trim() && searchResults.length === 0 && (
+              <div className="course-dropdown">
+                <div 
+                  className="course-option course-manual-entry"
+                  onClick={handleManualCourseEntry}
+                  style={{ 
+                    cursor: 'pointer', 
+                    backgroundColor: '#f0fdf4', 
+                    borderLeft: '3px solid #10b981',
+                    padding: '12px'
+                  }}
+                >
+                  <div style={{ color: '#059669', fontWeight: 'bold', marginBottom: '4px' }}>
+                    ✚ Add "{courseSearch}"
+                  </div>
+                  <div style={{ fontSize: '0.85em', color: '#6b7280' }}>
+                    Course not found? Add it manually
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
+          <small style={{ color: '#6b7280', fontSize: '0.85em', display: 'block', marginTop: '4px' }}>
+            💡 Can't find your course? Just type the name and press Enter or click "Add"
+          </small>
           <div className="selected-items">
             {form.selectedCourses.map((courseId, i) => (
               <span key={courseId} className="selected-tag">

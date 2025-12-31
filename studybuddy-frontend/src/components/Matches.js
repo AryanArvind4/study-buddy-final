@@ -11,6 +11,8 @@ function Matches() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
@@ -79,6 +81,8 @@ ${user?.email || ''}`;
     setSelectedMatch(match);
     setShowConnectModal(true);
     setCopySuccess('');
+    setEmailSent(false);
+    setSendingEmail(false);
   };
 
   const copyToClipboard = (text, type) => {
@@ -89,6 +93,50 @@ ${user?.email || ''}`;
       console.error('Failed to copy:', err);
       alert('Failed to copy. Please select and copy manually.');
     });
+  };
+
+  const handleSendEmail = async (match) => {
+    setSendingEmail(true);
+    setEmailSent(false);
+
+    try {
+      const sharedCourses = user.course_ids?.filter(c => match.course_ids?.includes(c)) || [];
+      const sharedSpots = user.study_spots?.filter(s => match.study_spots?.includes(s)) || [];
+      const sharedTimes = user.study_times?.filter(t => match.study_times?.includes(t)) || [];
+
+      const response = await fetch(`${API_BASE}/send_partner_email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          recipient_email: match.email,
+          recipient_name: match.name,
+          sender_name: user.name,
+          sender_email: user.email,
+          sender_department: user.department,
+          shared_courses: sharedCourses,
+          shared_spots: sharedSpots,
+          shared_times: sharedTimes
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setEmailSent(true);
+        setTimeout(() => {
+          setShowConnectModal(false);
+          setEmailSent(false);
+        }, 3000);
+      } else {
+        alert(data.error || 'Failed to send email. Please try copying the template instead.');
+      }
+    } catch (error) {
+      console.error('Error sending email:', error);
+      alert('Failed to send email. Please try copying the template instead.');
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   if (loading) {
@@ -491,11 +539,49 @@ ${user?.email || ''}`;
               {/* Email Template Section */}
               <div style={{ marginBottom: '2rem' }}>
                 <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', fontSize: '1rem' }}>
-                  ✉️ Pre-written Email Template:
+                  ✉️ Send Email Directly:
                 </label>
                 <p style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
-                  Copy this template and paste it into your email client. Feel free to personalize it!
+                  Click below to send the email directly from StudyBuddy, or copy the template to send manually.
                 </p>
+
+                {/* Send Email Now Button */}
+                <button
+                  onClick={() => handleSendEmail(selectedMatch)}
+                  disabled={sendingEmail || emailSent}
+                  style={{
+                    backgroundColor: emailSent ? '#10b981' : (sendingEmail ? '#9ca3af' : '#8b5cf6'),
+                    color: 'white',
+                    border: 'none',
+                    padding: '0.875rem 1.5rem',
+                    borderRadius: '0.5rem',
+                    cursor: sendingEmail || emailSent ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '1.05rem',
+                    width: '100%',
+                    marginBottom: '1rem',
+                    transition: 'all 0.2s ease',
+                    boxShadow: emailSent ? 'none' : '0 4px 6px rgba(139, 92, 246, 0.3)'
+                  }}
+                >
+                  {emailSent ? '✓ Email Sent Successfully!' : (sendingEmail ? '📧 Sending Email...' : '📧 Send Email Now')}
+                </button>
+
+                {/* Separator */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  margin: '1.5rem 0',
+                  color: '#9ca3af'
+                }}>
+                  <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }}></div>
+                  <span style={{ padding: '0 1rem', fontSize: '0.85rem' }}>or copy manually</span>
+                  <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }}></div>
+                </div>
+
+                <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
+                  Email Template:
+                </label>
                 <textarea
                   value={generateEmailTemplate(selectedMatch)}
                   readOnly
@@ -515,7 +601,7 @@ ${user?.email || ''}`;
                 <button
                   onClick={() => copyToClipboard(generateEmailTemplate(selectedMatch), 'template')}
                   style={{
-                    backgroundColor: copySuccess === 'template' ? '#10b981' : '#6366f1',
+                    backgroundColor: copySuccess === 'template' ? '#10b981' : '#6b7280',
                     color: 'white',
                     border: 'none',
                     padding: '0.75rem 1.5rem',
@@ -528,29 +614,35 @@ ${user?.email || ''}`;
                     transition: 'background-color 0.2s ease'
                   }}
                 >
-                  {copySuccess === 'template' ? '✓ Template Copied!' : 'Copy Email Template'}
+                  {copySuccess === 'template' ? '✓ Template Copied!' : '📋 Copy Email Template'}
                 </button>
               </div>
 
               {/* Instructions */}
               <div style={{
-                backgroundColor: '#eff6ff',
-                border: '1px solid #bfdbfe',
+                backgroundColor: '#f0fdf4',
+                border: '1px solid #bbf7d0',
                 borderRadius: '0.5rem',
                 padding: '1rem',
                 marginTop: '1.5rem'
               }}>
-                <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#1e40af', margin: '0 0 0.5rem 0' }}>
-                  📝 How to Connect:
+                <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#166534', margin: '0 0 0.5rem 0' }}>
+                  ✨ Two Ways to Connect:
                 </h4>
-                <ol style={{ margin: 0, paddingLeft: '1.2rem', color: '#1e40af', fontSize: '0.85rem', lineHeight: '1.6' }}>
-                  <li>Copy the email address above</li>
-                  <li>Copy the email template</li>
-                  <li>Open your email client (Gmail, Outlook, etc.)</li>
-                  <li>Paste the email address and template</li>
-                  <li>Personalize the message if you'd like</li>
-                  <li>Send and start your study partnership! 🎉</li>
-                </ol>
+                <div style={{ color: '#166534', fontSize: '0.85rem', lineHeight: '1.6' }}>
+                  <p style={{ margin: '0 0 0.5rem 0', fontWeight: '600' }}>Option 1: Direct Send (Recommended) 🚀</p>
+                  <ul style={{ margin: '0 0 1rem 0', paddingLeft: '1.2rem' }}>
+                    <li>Click "Send Email Now" button above</li>
+                    <li>Email will be sent automatically to {selectedMatch.name}</li>
+                    <li>They can reply directly to your email!</li>
+                  </ul>
+                  <p style={{ margin: '0 0 0.5rem 0', fontWeight: '600' }}>Option 2: Manual Copy 📋</p>
+                  <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                    <li>Copy the email template below</li>
+                    <li>Open your email client and paste</li>
+                    <li>Personalize if you'd like and send!</li>
+                  </ul>
+                </div>
               </div>
             </div>
           </div>

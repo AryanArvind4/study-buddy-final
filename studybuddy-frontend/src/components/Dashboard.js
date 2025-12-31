@@ -70,6 +70,20 @@ function Dashboard() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <span style={{ color: '#374151', fontWeight: '500' }}>Hello, {user.name}!</span>
             <button 
+              onClick={() => window.location.href = '/edit-profile'}
+              style={{
+                backgroundColor: '#6366f1',
+                color: 'white',
+                border: 'none',
+                padding: '0.5rem 1rem',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+            >
+              Edit Profile
+            </button>
+            <button 
               onClick={() => {
                 fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' })
                   .finally(() => (window.location.href = '/'));
@@ -174,9 +188,26 @@ function Dashboard() {
             boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
             gridColumn: 'span 1'
           }}>
-            <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1.5rem', margin: '0 0 1.5rem 0' }}>
-              Profile Summary
-            </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1f2937', margin: 0 }}>
+                Profile Summary
+              </h3>
+              <button
+                onClick={() => window.location.href = '/edit-profile'}
+                style={{
+                  backgroundColor: 'transparent',
+                  color: '#6366f1',
+                  border: '2px solid #6366f1',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '0.9rem'
+                }}
+              >
+                ✏️ Edit
+              </button>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div>
                 <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>College:</span>
