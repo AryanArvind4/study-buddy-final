@@ -44,7 +44,10 @@ except Exception as e:
     print("Check MONGO_URI credentials and MongoDB Atlas network access.")
     raise SystemExit(1)
 
-db = client["study_partner"]
+# Use a separate database (e.g. MONGO_DB_NAME=study_partner_dev) when testing locally.
+DB_NAME = os.getenv("MONGO_DB_NAME", "study_partner")
+print(f"🗄️ Using database: {DB_NAME}")
+db = client[DB_NAME]
 students_collection = db["students"]
 courses_collection = db["courses"]
 otp_collection = db["otps"]
@@ -111,9 +114,15 @@ if not SECRET_KEY:
     SECRET_KEY = secrets.token_hex(32)
     print("⚠️ SECRET_KEY not set; using a temporary key (development only)")
 app.config["SECRET_KEY"] = SECRET_KEY
-app.config["SESSION_COOKIE_SECURE"] = True  # Only send cookies over HTTPS
 app.config["SESSION_COOKIE_HTTPONLY"] = True  # Prevent JavaScript access to session cookie
-app.config["SESSION_COOKIE_SAMESITE"] = "None"  # Allow cross-site cookies for CORS
+if IS_DEV:
+    # localhost runs on plain HTTP, where browsers drop Secure cookies.
+    # localhost:3000 -> localhost:5001 counts as same-site, so Lax works.
+    app.config["SESSION_COOKIE_SECURE"] = False
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+else:
+    app.config["SESSION_COOKIE_SECURE"] = True  # Only send cookies over HTTPS
+    app.config["SESSION_COOKIE_SAMESITE"] = "None"  # Frontend and backend are on different sites
 app.config["SESSION_COOKIE_DOMAIN"] = None  # Allow cookies from any domain
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
 app.config["SESSION_COOKIE_PATH"] = "/"  # Cookies available for all paths
@@ -471,7 +480,11 @@ def send_otp_email_async(app_instance, email, otp):
     thread.start()
 
 def send_otp_email(email, otp):
-    """Send the OTP by email in the background. The code itself is never logged."""
+    """Send the OTP by email in the background. The code is only printed in development."""
+    if IS_DEV:
+        print(f"\n🔑 [DEV ONLY] Login code for {email}: {otp}\n", flush=True)
+        if not os.getenv("MAIL_USERNAME") or not os.getenv("MAIL_PASSWORD"):
+            return True  # no mail credentials locally; use the printed code
     print("📤 Sending verification email in background...", flush=True)
     send_otp_email_async(app, email, otp)
     return True
