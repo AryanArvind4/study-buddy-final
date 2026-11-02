@@ -7,6 +7,9 @@ sys.path.insert(0, BACKEND)
 os.environ["MONGO_URI"] = "mongodb://fake"
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ["ADMIN_EMAILS"] = "admin@gapp.nthu.edu.tw"
+# Explicit values so a local backend/.env (development mode, dev DB) can't change test behaviour.
+os.environ["FLASK_ENV"] = "test"
+os.environ["MONGO_DB_NAME"] = "test"
 
 import mongomock, pymongo
 _shared = mongomock.MongoClient()

@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.update({"MONGO_URI": "mongodb://fake", "SECRET_KEY": "test-secret"})
-os.environ.pop("FLASK_ENV", None)
+# Explicit values so a local backend/.env (development mode, dev DB) can't change test behaviour.
+os.environ.update({"FLASK_ENV": "test", "MONGO_DB_NAME": "test"})
 
 import mongomock, pymongo
 shared = mongomock.MongoClient()
