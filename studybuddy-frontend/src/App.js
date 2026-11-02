@@ -1,6 +1,5 @@
 import React from 'react';
-import './index.css';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './components/landingPage';
 import Register from './components/Register';
 import Login from './components/Login';
@@ -18,6 +17,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/matches" element={<Matches />} />
         <Route path="/edit-profile" element={<EditProfile />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );

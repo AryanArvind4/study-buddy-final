@@ -1,642 +1,223 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../api';
+import { useCourseNames, useCurrentUser } from '../hooks';
+import { AppShell, Alert, Avatar, EmptyState, Icon, Modal, Spinner, overlapLabel } from './ui';
 
-// API Base URL - use environment variable or default to production
-const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+function SharedRow({ icon, label, items, render = x => x, accent }) {
+  return (
+    <div>
+      <div className="section-label"><Icon name={icon} size={13} /> {label}</div>
+      {items.length ? (
+        <div className="chips">
+          {items.map(item => (
+            <span key={item} className={`chip${accent ? ' chip-accent' : ''}`}>
+              <span className="chip-text">{render(item)}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <span className="none">Nothing in common yet</span>
+      )}
+    </div>
+  );
+}
 
-function Matches() {
-  const [matches, setMatches] = useState([]);
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selectedMatch, setSelectedMatch] = useState(null);
-  const [showConnectModal, setShowConnectModal] = useState(false);
-  const [copySuccess, setCopySuccess] = useState('');
-  const [sendingEmail, setSendingEmail] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        // First get current user data
-        const meRes = await fetch(`${API_BASE}/me`, { credentials: 'include' });
-        if (!meRes.ok) {
-          window.location.href = '/login';
-          return;
-        }
-        const userData = await meRes.json();
-        setUser(userData);
-
-        // Then get matches for this user
-        const matchesRes = await fetch(`${API_BASE}/get_matches`, {
-          credentials: 'include' 
-        });
-        if (!matchesRes.ok) {
-          throw new Error('Failed to fetch matches');
-        }
-        const matchesData = await matchesRes.json();
-        setMatches(matchesData.matches || []);
-        setLoading(false);
-      } catch (err) {
-        console.error('Error fetching matches:', err);
-        setError(err.message);
-        setLoading(false);
-      }
-    }
-
-    fetchData();
-  }, []);
-
-  const generateEmailTemplate = (match) => {
-    const sharedCourses = match.shared_courses.length > 0 
-      ? match.shared_courses.join(', ') 
-      : 'various courses';
-    const sharedSpots = match.shared_spots.length > 0 
-      ? match.shared_spots.join(', ') 
-      : 'study locations';
-    const sharedTimes = match.shared_times.length > 0 
-      ? match.shared_times.join(', ') 
-      : 'study times';
-
-    return `Subject: Study Partner Connection from StudyBuddy - ${user?.name}
+function emailTemplate(match, user, courseName) {
+  const lines = [];
+  if (match.shared_courses.length) lines.push(`- We're both taking: ${match.shared_courses.map(courseName).join(', ')}`);
+  if (match.shared_spots.length) lines.push(`- We both like studying at: ${match.shared_spots.join(', ')}`);
+  if (match.shared_times.length) lines.push(`- We're both free: ${match.shared_times.join(', ')}`);
+  return `Subject: Study partner? (via StudyBuddy)
 
 Hi ${match.name},
 
-I hope this email finds you well! My name is ${user?.name || 'a fellow NTHU student'}, and I found your profile through StudyBuddy, our study partner matching platform.
+I'm ${user.name} from ${user.department}. I found you on StudyBuddy and noticed we have a few things in common:
+${lines.join('\n') || '- Similar study habits'}
 
-I noticed we have several things in common:
-${match.shared_courses.length > 0 ? `- Shared Courses: ${sharedCourses}` : ''}
-${match.shared_spots.length > 0 ? `- Preferred Study Spots: ${sharedSpots}` : ''}
-${match.shared_times.length > 0 ? `- Available Study Times: ${sharedTimes}` : ''}
+Would you like to study together sometime? Let me know what time works for you.
 
-I think we could be great study partners! Would you be interested in meeting up to study together? We could help each other with coursework, prepare for exams, or just have a productive study session.
+Thanks,
+${user.name}
+${user.email}`;
+}
 
-Let me know what you think! Looking forward to hearing from you.
+function ConnectModal({ match, user, courseName, onClose }) {
+  const [status, setStatus] = useState('idle'); // idle | sending | sent
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState('');
+  const template = emailTemplate(match, user, courseName);
 
-Best regards,
-${user?.name || 'Your Study Partner'}
-${user?.email || ''}`;
-  };
-
-  const handleConnectClick = (match) => {
-    setSelectedMatch(match);
-    setShowConnectModal(true);
-    setCopySuccess('');
-    setEmailSent(false);
-    setSendingEmail(false);
-  };
-
-  const copyToClipboard = (text, type) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopySuccess(type);
-      setTimeout(() => setCopySuccess(''), 2000);
-    }).catch(err => {
-      console.error('Failed to copy:', err);
-      alert('Failed to copy. Please select and copy manually.');
-    });
-  };
-
-  const handleSendEmail = async (match) => {
-    setSendingEmail(true);
-    setEmailSent(false);
-
+  async function send() {
+    setStatus('sending');
+    setError('');
     try {
-      // The server looks up the partner and works out what you share.
-      const response = await fetch(`${API_BASE}/send_partner_email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ partner_id: match.student_id })
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setEmailSent(true);
-        setTimeout(() => {
-          setShowConnectModal(false);
-          setEmailSent(false);
-        }, 3000);
-      } else {
-        alert(data.error || 'Failed to send email. Please try copying the template instead.');
-      }
-    } catch (error) {
-      console.error('Error sending email:', error);
-      alert('Failed to send email. Please try copying the template instead.');
-    } finally {
-      setSendingEmail(false);
+      await api('/send_partner_email', { method: 'POST', body: { partner_id: match.student_id } });
+      setStatus('sent');
+    } catch (err) {
+      setError(err.message);
+      setStatus('idle');
     }
-  };
+  }
 
-  if (loading) {
-    return (
-      <div style={{ backgroundColor: '#f5f7fa', minHeight: '100vh' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '1.2rem', color: '#6366f1' }}>Finding your study matches...</div>
-          </div>
-        </div>
-      </div>
-    );
+  async function copy(text, what) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(what);
+      setTimeout(() => setCopied(''), 2000);
+    } catch {
+      setError('Could not copy automatically. Select the text and copy it manually.');
+    }
   }
 
   return (
-    <div style={{ backgroundColor: '#f5f7fa', minHeight: '100vh' }}>
-      {/* Navigation Bar */}
-      <nav style={{
-        backgroundColor: '#fff',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        padding: '1rem 2rem',
-        marginBottom: '2rem'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1200px', margin: '0 auto' }}>
-          <h1 style={{ color: '#6366f1', fontSize: '1.8rem', fontWeight: 'bold', margin: 0 }}>StudyBuddy</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <button 
-              onClick={() => window.location.href = '/dashboard'}
-              style={{
-                backgroundColor: '#6366f1',
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '500'
-              }}
-            >
-              ← Dashboard
-            </button>
-            <span style={{ color: '#374151', fontWeight: '500' }}>Hello, {user?.name}!</span>
-            <button 
-              onClick={() => {
-                fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' })
-                  .finally(() => (window.location.href = '/'));
-              }}
-              style={{
-                backgroundColor: '#ef4444',
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '500'
-              }}
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      {/* Main Content */}
-      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 2rem' }}>
-        {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '0.5rem' }}>
-            🎯 Your Study Matches
-          </h2>
-          <p style={{ fontSize: '1.1rem', color: '#6b7280' }}>
-            Find your perfect study partners based on shared courses, preferences, and compatibility
-          </p>
-        </div>
-
-        {error ? (
-          <div style={{
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fecaca',
-            borderRadius: '0.5rem',
-            padding: '1rem',
-            textAlign: 'center',
-            color: '#dc2626'
-          }}>
-            Error: {error}
-          </div>
-        ) : matches.length === 0 ? (
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '1rem',
-            padding: '3rem 2rem',
-            textAlign: 'center',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-          }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔍</div>
-            <h3 style={{ fontSize: '1.5rem', color: '#374151', marginBottom: '1rem', margin: '0 0 1rem 0' }}>
-              No matches found yet
-            </h3>
-            <p style={{ color: '#6b7280', marginBottom: '2rem' }}>
-              We couldn't find any study partners that match your profile right now. 
-              Try updating your courses or study preferences to find more matches!
-            </p>
-            <button 
-              onClick={() => window.location.href = '/dashboard'}
-              style={{
-                backgroundColor: '#6366f1',
-                color: 'white',
-                border: 'none',
-                padding: '0.75rem 1.5rem',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '1rem'
-              }}
-            >
-              Update Profile
-            </button>
-          </div>
+    <Modal
+      title={`Reach out to ${match.name.split(' ')[0]}`}
+      description="We'll send a short introduction from StudyBuddy. Replies go straight to your inbox."
+      onClose={onClose}
+    >
+      <div className="stack">
+        <Alert>{error}</Alert>
+        {status === 'sent' ? (
+          <Alert type="success">
+            Sent! {match.name.split(' ')[0]} can reply to you at {user.email}.
+          </Alert>
         ) : (
-          <>
-            {/* Matches Summary */}
-            <div style={{
-              backgroundColor: 'white',
-              borderRadius: '1rem',
-              padding: '1.5rem 2rem',
-              marginBottom: '2rem',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-              textAlign: 'center'
-            }}>
-              <div style={{ fontSize: '1.1rem', color: '#374151' }}>
-                We found <span style={{ color: '#6366f1', fontWeight: 'bold', fontSize: '1.3rem' }}>{matches.length}</span> potential study partner{matches.length !== 1 ? 's' : ''} for you!
-              </div>
-            </div>
-
-            {/* Matches Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
-              {matches.map((match, idx) => (
-                <div key={idx} style={{
-                  backgroundColor: 'white',
-                  borderRadius: '1rem',
-                  padding: '2rem',
-                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                  cursor: 'pointer'
-                }}
-                onMouseOver={e => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 8px 15px rgba(0, 0, 0, 0.15)';
-                }}
-                onMouseOut={e => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
-                }}
-                >
-                  {/* Match Header */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                    <div>
-                      <h3 style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#1f2937', margin: '0 0 0.25rem 0' }}>
-                        {match.name}
-                      </h3>
-                      <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: 0 }}>
-                        {match.department || 'Department not specified'}
-                      </p>
-                    </div>
-                    <div style={{
-                      backgroundColor: match.similarity >= 70 ? '#dcfce7' : match.similarity >= 50 ? '#fef3c7' : '#fef2f2',
-                      color: match.similarity >= 70 ? '#166534' : match.similarity >= 50 ? '#92400e' : '#dc2626',
-                      padding: '0.5rem 0.75rem',
-                      borderRadius: '0.5rem',
-                      fontWeight: 'bold',
-                      fontSize: '0.9rem'
-                    }}>
-                      {match.similarity}% match
-                    </div>
-                  </div>
-
-                  {/* Shared Items */}
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    {/* Shared Courses */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', margin: '0 0 0.5rem 0' }}>
-                        📚 Shared Courses ({match.shared_courses.length})
-                      </h4>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', minHeight: '2rem' }}>
-                        {match.shared_courses.length > 0 ? (
-                          match.shared_courses.slice(0, 3).map((course, i) => (
-                            <span key={i} style={{
-                              backgroundColor: '#dbeafe',
-                              color: '#1e40af',
-                              padding: '0.25rem 0.5rem',
-                              borderRadius: '0.375rem',
-                              fontSize: '0.75rem',
-                              fontWeight: '500'
-                            }}>
-                              {course}
-                            </span>
-                          ))
-                        ) : (
-                          <span style={{ color: '#9ca3af', fontSize: '0.8rem', fontStyle: 'italic' }}>
-                            No shared courses
-                          </span>
-                        )}
-                        {match.shared_courses.length > 3 && (
-                          <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                            +{match.shared_courses.length - 3} more
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Shared Study Spots */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', margin: '0 0 0.5rem 0' }}>
-                        📍 Shared Study Spots ({match.shared_spots.length})
-                      </h4>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', minHeight: '2rem' }}>
-                        {match.shared_spots.length > 0 ? (
-                          match.shared_spots.slice(0, 3).map((spot, i) => (
-                            <span key={i} style={{
-                              backgroundColor: '#f0fdf4',
-                              color: '#166534',
-                              padding: '0.25rem 0.5rem',
-                              borderRadius: '0.375rem',
-                              fontSize: '0.75rem',
-                              fontWeight: '500'
-                            }}>
-                              {spot}
-                            </span>
-                          ))
-                        ) : (
-                          <span style={{ color: '#9ca3af', fontSize: '0.8rem', fontStyle: 'italic' }}>
-                            No shared study spots
-                          </span>
-                        )}
-                        {match.shared_spots.length > 3 && (
-                          <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                            +{match.shared_spots.length - 3} more
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Shared Study Times */}
-                    <div>
-                      <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', margin: '0 0 0.5rem 0' }}>
-                        🕐 Shared Study Times ({match.shared_times.length})
-                      </h4>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', minHeight: '2rem' }}>
-                        {match.shared_times.length > 0 ? (
-                          match.shared_times.slice(0, 3).map((time, i) => (
-                            <span key={i} style={{
-                              backgroundColor: '#fef3c7',
-                              color: '#92400e',
-                              padding: '0.25rem 0.5rem',
-                              borderRadius: '0.375rem',
-                              fontSize: '0.75rem',
-                              fontWeight: '500'
-                            }}>
-                              {time}
-                            </span>
-                          ))
-                        ) : (
-                          <span style={{ color: '#9ca3af', fontSize: '0.8rem', fontStyle: 'italic' }}>
-                            No shared study times
-                          </span>
-                        )}
-                        {match.shared_times.length > 3 && (
-                          <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                            +{match.shared_times.length - 3} more
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Connect Button */}
-                  <button 
-                    onClick={() => handleConnectClick(match)}
-                    style={{
-                      backgroundColor: '#6366f1',
-                      color: 'white',
-                      border: 'none',
-                      padding: '0.75rem 1.5rem',
-                      borderRadius: '0.5rem',
-                      cursor: 'pointer',
-                      fontWeight: '600',
-                      fontSize: '1rem',
-                      width: '100%',
-                      transition: 'background-color 0.2s ease'
-                    }}
-                    onMouseOver={e => e.target.style.backgroundColor = '#5b21b6'}
-                    onMouseOut={e => e.target.style.backgroundColor = '#6366f1'}
-                  >
-                    🤝 Connect with {match.name}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
+          <button type="button" className="btn btn-primary btn-lg btn-block" onClick={send} disabled={status === 'sending'}>
+            {status === 'sending' ? <><Spinner /> Sending…</> : <><Icon name="send" size={17} /> Send introduction email</>}
+          </button>
         )}
+      </div>
 
-        {/* Connect Modal */}
-        {showConnectModal && selectedMatch && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.7)',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              zIndex: 1000,
-              padding: '2rem'
-            }}
-            onClick={() => setShowConnectModal(false)}
-          >
-            <div
-              style={{
-                backgroundColor: 'white',
-                borderRadius: '1rem',
-                maxWidth: '700px',
-                width: '100%',
-                maxHeight: '90vh',
-                overflow: 'auto',
-                padding: '2rem',
-                position: 'relative'
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Close Button */}
-              <button
-                onClick={() => setShowConnectModal(false)}
-                style={{
-                  position: 'absolute',
-                  top: '1rem',
-                  right: '1rem',
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '1.5rem',
-                  cursor: 'pointer',
-                  color: '#6b7280',
-                  padding: '0.5rem'
-                }}
-              >
-                ✕
+      <div className="divider">or write it yourself</div>
+
+      <details className="disclosure">
+        <summary><Icon name="chevronRight" size={16} /> Copy their email and a message template</summary>
+        <div className="stack" style={{ marginTop: 14 }}>
+          <div>
+            <label className="label" htmlFor="match-email">Email address</label>
+            <div className="copy-field">
+              <input id="match-email" className="input" value={match.email} readOnly />
+              <button type="button" className="btn btn-secondary" onClick={() => copy(match.email, 'email')}>
+                <Icon name={copied === 'email' ? 'check' : 'copy'} size={16} />
+                {copied === 'email' ? 'Copied' : 'Copy'}
               </button>
-
-              {/* Modal Header */}
-              <div style={{ marginBottom: '2rem' }}>
-                <h2 style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '0.5rem' }}>
-                  Connect with {selectedMatch.name}
-                </h2>
-                <p style={{ color: '#6b7280', fontSize: '1rem' }}>
-                  Send them an email to start your study partnership!
-                </p>
-              </div>
-
-              {/* Email Address Section */}
-              <div style={{ marginBottom: '2rem' }}>
-                <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', fontSize: '1rem' }}>
-                  📧 Email Address:
-                </label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input
-                    type="text"
-                    value={selectedMatch.email}
-                    readOnly
-                    style={{
-                      flex: 1,
-                      padding: '0.75rem',
-                      border: '2px solid #e5e7eb',
-                      borderRadius: '0.5rem',
-                      fontSize: '1rem',
-                      backgroundColor: '#f9fafb',
-                      color: '#1f2937'
-                    }}
-                  />
-                  <button
-                    onClick={() => copyToClipboard(selectedMatch.email, 'email')}
-                    style={{
-                      backgroundColor: copySuccess === 'email' ? '#10b981' : '#6366f1',
-                      color: 'white',
-                      border: 'none',
-                      padding: '0.75rem 1.5rem',
-                      borderRadius: '0.5rem',
-                      cursor: 'pointer',
-                      fontWeight: '600',
-                      fontSize: '1rem',
-                      whiteSpace: 'nowrap',
-                      transition: 'background-color 0.2s ease'
-                    }}
-                  >
-                    {copySuccess === 'email' ? '✓ Copied!' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Email Template Section */}
-              <div style={{ marginBottom: '2rem' }}>
-                <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', fontSize: '1rem' }}>
-                  ✉️ Send Email Directly:
-                </label>
-                <p style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
-                  Click below to send the email directly from StudyBuddy, or copy the template to send manually.
-                </p>
-
-                {/* Send Email Now Button */}
-                <button
-                  onClick={() => handleSendEmail(selectedMatch)}
-                  disabled={sendingEmail || emailSent}
-                  style={{
-                    backgroundColor: emailSent ? '#10b981' : (sendingEmail ? '#9ca3af' : '#8b5cf6'),
-                    color: 'white',
-                    border: 'none',
-                    padding: '0.875rem 1.5rem',
-                    borderRadius: '0.5rem',
-                    cursor: sendingEmail || emailSent ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '1.05rem',
-                    width: '100%',
-                    marginBottom: '1rem',
-                    transition: 'all 0.2s ease',
-                    boxShadow: emailSent ? 'none' : '0 4px 6px rgba(139, 92, 246, 0.3)'
-                  }}
-                >
-                  {emailSent ? '✓ Email Sent Successfully!' : (sendingEmail ? '📧 Sending Email...' : '📧 Send Email Now')}
-                </button>
-
-                {/* Separator */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  margin: '1.5rem 0',
-                  color: '#9ca3af'
-                }}>
-                  <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }}></div>
-                  <span style={{ padding: '0 1rem', fontSize: '0.85rem' }}>or copy manually</span>
-                  <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }}></div>
-                </div>
-
-                <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
-                  Email Template:
-                </label>
-                <textarea
-                  value={generateEmailTemplate(selectedMatch)}
-                  readOnly
-                  style={{
-                    width: '100%',
-                    minHeight: '300px',
-                    padding: '1rem',
-                    border: '2px solid #e5e7eb',
-                    borderRadius: '0.5rem',
-                    fontSize: '0.9rem',
-                    backgroundColor: '#f9fafb',
-                    color: '#1f2937',
-                    fontFamily: 'monospace',
-                    resize: 'vertical'
-                  }}
-                />
-                <button
-                  onClick={() => copyToClipboard(generateEmailTemplate(selectedMatch), 'template')}
-                  style={{
-                    backgroundColor: copySuccess === 'template' ? '#10b981' : '#6b7280',
-                    color: 'white',
-                    border: 'none',
-                    padding: '0.75rem 1.5rem',
-                    borderRadius: '0.5rem',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '1rem',
-                    marginTop: '0.75rem',
-                    width: '100%',
-                    transition: 'background-color 0.2s ease'
-                  }}
-                >
-                  {copySuccess === 'template' ? '✓ Template Copied!' : '📋 Copy Email Template'}
-                </button>
-              </div>
-
-              {/* Instructions */}
-              <div style={{
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #bbf7d0',
-                borderRadius: '0.5rem',
-                padding: '1rem',
-                marginTop: '1.5rem'
-              }}>
-                <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: '#166534', margin: '0 0 0.5rem 0' }}>
-                  ✨ Two Ways to Connect:
-                </h4>
-                <div style={{ color: '#166534', fontSize: '0.85rem', lineHeight: '1.6' }}>
-                  <p style={{ margin: '0 0 0.5rem 0', fontWeight: '600' }}>Option 1: Direct Send (Recommended) 🚀</p>
-                  <ul style={{ margin: '0 0 1rem 0', paddingLeft: '1.2rem' }}>
-                    <li>Click "Send Email Now" button above</li>
-                    <li>Email will be sent automatically to {selectedMatch.name}</li>
-                    <li>They can reply directly to your email!</li>
-                  </ul>
-                  <p style={{ margin: '0 0 0.5rem 0', fontWeight: '600' }}>Option 2: Manual Copy 📋</p>
-                  <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
-                    <li>Copy the email template below</li>
-                    <li>Open your email client and paste</li>
-                    <li>Personalize if you'd like and send!</li>
-                  </ul>
-                </div>
-              </div>
             </div>
           </div>
-        )}
-      </main>
-    </div>
+          <div>
+            <label className="label" htmlFor="match-template">Message</label>
+            <textarea id="match-template" className="template" value={template} readOnly />
+            <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 8 }}
+              onClick={() => copy(template, 'template')}>
+              <Icon name={copied === 'template' ? 'check' : 'copy'} size={16} />
+              {copied === 'template' ? 'Copied' : 'Copy message'}
+            </button>
+          </div>
+        </div>
+      </details>
+    </Modal>
+  );
+}
+
+function Matches() {
+  const { user, error: userError } = useCurrentUser();
+  const [matches, setMatches] = useState(null);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    if (!user) return;
+    api('/get_matches')
+      .then(d => setMatches(d.matches || []))
+      .catch(err => {
+        setError(err.message);
+        setMatches([]);
+      });
+  }, [user]);
+
+  const sharedCodes = useMemo(() => (matches || []).flatMap(m => m.shared_courses), [matches]);
+  const [courseNames] = useCourseNames(sharedCodes);
+  const courseName = code => courseNames[code] || code;
+
+  const content = (() => {
+    if (userError) return <Alert>{userError}</Alert>;
+    if (error) return <Alert>{error}</Alert>;
+    if (!user || matches === null) {
+      return (
+        <div className="match-grid" aria-busy="true">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="card">
+              <div className="row" style={{ marginBottom: 20 }}>
+                <div className="skeleton" style={{ width: 48, height: 48, borderRadius: '50%' }} />
+                <div style={{ flex: 1 }}>
+                  <div className="skeleton" style={{ height: 16, width: '60%', marginBottom: 8 }} />
+                  <div className="skeleton" style={{ height: 12, width: '80%' }} />
+                </div>
+              </div>
+              <div className="skeleton" style={{ height: 72, marginBottom: 16 }} />
+              <div className="skeleton" style={{ height: 40 }} />
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (matches.length === 0) {
+      return (
+        <EmptyState
+          icon="users"
+          title="No matches yet"
+          action={<Link to="/edit-profile" className="btn btn-primary">Update your profile</Link>}
+        >
+          No other students share your courses or study habits yet. Try adding more courses or times. Telling
+          classmates about StudyBuddy helps too.
+        </EmptyState>
+      );
+    }
+    return (
+      <div className="match-grid">
+        {matches.map(match => {
+          const label = overlapLabel(match.similarity);
+          return (
+            <article key={match.student_id} className="card match-card" aria-labelledby={`m-${match.student_id}`}>
+              <div className="who" style={{ alignItems: 'flex-start' }}>
+                <Avatar name={match.name} large />
+                <div style={{ minWidth: 0 }}>
+                  <h2 id={`m-${match.student_id}`}>{match.name}</h2>
+                  <p>{match.department || 'Department not set'}</p>
+                  <span className={`badge badge-${label.tone}`} style={{ marginTop: 8 }}
+                    title={`Similarity score ${match.similarity}`}>
+                    {label.text}
+                  </span>
+                </div>
+              </div>
+              <div className="shared">
+                <SharedRow icon="book" label="Shared courses" items={match.shared_courses} render={courseName} accent />
+                <SharedRow icon="pin" label="Places you both like" items={match.shared_spots} />
+                <SharedRow icon="clock" label="Times you're both free" items={match.shared_times} />
+              </div>
+              <button type="button" className="btn btn-primary btn-block" onClick={() => setSelected(match)}>
+                <Icon name="mail" size={17} /> Reach out
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    );
+  })();
+
+  return (
+    <AppShell user={user}>
+      <div className="page">
+        <header className="page-header">
+          <h1>Your matches</h1>
+          <p>Students who share the most courses, places and times with you.</p>
+        </header>
+        {content}
+      </div>
+      {selected && user && (
+        <ConnectModal match={selected} user={user} courseName={courseName} onClose={() => setSelected(null)} />
+      )}
+    </AppShell>
   );
 }
 

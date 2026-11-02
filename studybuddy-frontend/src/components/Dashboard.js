@@ -1,338 +1,168 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../api';
+import { useCourseNames, useCurrentUser } from '../hooks';
+import { AppShell, Alert, Avatar, Icon, Loading, overlapLabel } from './ui';
 
-// API Base URL - use environment variable or default to production
-const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
-function Dashboard() {
-  const [user, setUser] = useState(null);
-  const [stats, setStats] = useState({ totalStudents: 0, coursesCount: 0, spotsCount: 0 });
-  const [loading, setLoading] = useState(true);
-  const [courseNames, setCourseNames] = useState({});
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const meRes = await fetch(`${API_BASE}/me`, { credentials: 'include' });
-        if (!meRes.ok) throw new Error('Not authenticated');
-        const userData = await meRes.json();
-        setUser(userData);
-
-        const statsRes = await fetch(`${API_BASE}/stats`, { credentials: 'include' });
-        if (!statsRes.ok) throw new Error('Failed to load stats');
-        const statsData = await statsRes.json();
-
-        // Fetch course names for user's courses
-        if (userData.course_ids && userData.course_ids.length > 0) {
-          const courseNamesRes = await fetch(`${API_BASE}/get_course_names`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ course_codes: userData.course_ids })
-          });
-          if (courseNamesRes.ok) {
-            const courseData = await courseNamesRes.json();
-            setCourseNames(courseData.courses);
-          }
-        }
-
-        setStats({
-          totalStudents: statsData.total_students,
-          coursesCount: userData.course_ids?.length || 0,
-          spotsCount: userData.study_spots?.length || 0,
-        });
-        setLoading(false);
-      } catch (err) {
-        console.error(err);
-        window.location.href = '/login';
-      }
-    }
-
-    fetchData();
-  }, []);
-
-  if (loading || !user) return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-      <div>Loading your profile...</div>
+function TopMatch({ state }) {
+  if (state.loading) {
+    return (
+      <div className="card" aria-busy="true">
+        <div className="skeleton" style={{ height: 18, width: '40%', marginBottom: 16 }} />
+        <div className="skeleton" style={{ height: 48, marginBottom: 12 }} />
+        <div className="skeleton" style={{ height: 40, width: '50%' }} />
+      </div>
+    );
+  }
+  if (state.error) {
+    return <div className="card"><Alert>{state.error}</Alert></div>;
+  }
+  const match = state.matches[0];
+  if (!match) {
+    return (
+      <div className="card">
+        <div className="section-label">Your best match</div>
+        <h2 className="card-title">No matches yet</h2>
+        <p className="muted small" style={{ marginBottom: 16 }}>
+          Nobody else has added your courses so far. Adding more courses or study times gives you more chances to match,
+          and inviting classmates helps too.
+        </p>
+        <Link to="/edit-profile" className="btn btn-secondary">Update your profile</Link>
+      </div>
+    );
+  }
+  const label = overlapLabel(match.similarity);
+  return (
+    <div className="card">
+      <div className="row-between" style={{ marginBottom: 14 }}>
+        <div className="section-label" style={{ margin: 0 }}>Your best match</div>
+        <span className={`badge badge-${label.tone}`}>{label.text}</span>
+      </div>
+      <div className="row" style={{ marginBottom: 14 }}>
+        <Avatar name={match.name} large />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 'var(--text-lg)' }}>{match.name}</div>
+          <div className="muted small">{match.department}</div>
+        </div>
+      </div>
+      <p className="small muted" style={{ marginBottom: 18 }}>
+        {[
+          match.shared_courses.length && `${match.shared_courses.length} shared course${match.shared_courses.length > 1 ? 's' : ''}`,
+          match.shared_spots.length && `${match.shared_spots.length} shared spot${match.shared_spots.length > 1 ? 's' : ''}`,
+          match.shared_times.length && `${match.shared_times.length} shared time${match.shared_times.length > 1 ? 's' : ''}`,
+        ].filter(Boolean).join(' · ') || 'Similar study habits'}
+      </p>
+      <Link to="/matches" className="btn btn-primary">
+        See all matches <Icon name="arrowRight" size={16} />
+      </Link>
     </div>
   );
+}
+
+function Dashboard() {
+  const { user, error: userError } = useCurrentUser();
+  const [courseNames] = useCourseNames(user?.course_ids);
+  const [total, setTotal] = useState(null);
+  const [matchState, setMatchState] = useState({ loading: true, matches: [], error: '' });
+
+  useEffect(() => {
+    if (!user) return;
+    api('/stats').then(d => setTotal(d.total_students)).catch(() => setTotal(null));
+    api('/get_matches')
+      .then(d => setMatchState({ loading: false, matches: d.matches || [], error: '' }))
+      .catch(err => setMatchState({ loading: false, matches: [], error: err.message }));
+  }, [user]);
+
+  if (userError) return <AppShell><div className="page"><Alert>{userError}</Alert></div></AppShell>;
+  if (!user) return <AppShell><Loading label="Loading your profile…" /></AppShell>;
+
+  const firstName = user.name?.split(' ')[0] || 'there';
 
   return (
-    <div style={{ backgroundColor: '#f5f7fa', minHeight: '100vh' }}>
-      {/* Navigation Bar */}
-      <nav style={{
-        backgroundColor: '#fff',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        padding: '1rem 2rem',
-        marginBottom: '2rem'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1200px', margin: '0 auto' }}>
-          <h1 style={{ color: '#6366f1', fontSize: '1.8rem', fontWeight: 'bold', margin: 0 }}>StudyBuddy</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <span style={{ color: '#374151', fontWeight: '500' }}>Hello, {user.name}!</span>
-            <button 
-              onClick={() => window.location.href = '/edit-profile'}
-              style={{
-                backgroundColor: '#6366f1',
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '500'
-              }}
-            >
-              Edit Profile
-            </button>
-            <button 
-              onClick={() => {
-                fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' })
-                  .finally(() => (window.location.href = '/'));
-              }}
-              style={{
-                backgroundColor: '#ef4444',
-                color: 'white',
-                border: 'none',
-                padding: '0.5rem 1rem',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '500'
-              }}
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </nav>
+    <AppShell user={user}>
+      <div className="page">
+        <header className="page-header">
+          <h1>{greeting()}, {firstName}</h1>
+          <p>Here's where your study partner search stands.</p>
+        </header>
 
-      {/* Main Content */}
-      <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 2rem' }}>
-        {/* Welcome Header */}
-        <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '0.5rem' }}>
-            Find Your Study Partners
-          </h2>
-          <p style={{ fontSize: '1.1rem', color: '#6b7280' }}>
-            Discover students who share your academic interests
-          </p>
-        </div>
+        <div className="grid-2" style={{ marginBottom: 20 }}>
+          <TopMatch state={matchState} />
 
-        {/* Cards Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', marginBottom: '3rem' }}>
-          
-          {/* Quick Match Card */}
-          <div style={{
-            backgroundColor: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-            borderRadius: '1rem',
-            padding: '2rem',
-            color: 'white',
-            boxShadow: '0 10px 25px rgba(99, 102, 241, 0.3)'
-          }}>
-            <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '1rem', margin: '0 0 1rem 0' }}>
-              Quick Match
-            </h3>
-            <p style={{ marginBottom: '1.5rem', opacity: 0.9 }}>
-              Find study partners based on your profile and preferences
+          <div className="card">
+            <div className="section-label">At a glance</div>
+            <div className="stats-row" style={{ marginTop: 12 }}>
+              <div className="stat">
+                <span className="stat-value">{user.course_ids?.length || 0}</span>
+                <span className="stat-label">Your courses</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{matchState.loading ? '–' : matchState.matches.length}</span>
+                <span className="stat-label">Top matches</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{total ?? '–'}</span>
+                <span className="stat-label">Students here</span>
+              </div>
+            </div>
+            <p className="small muted" style={{ marginTop: 16 }}>
+              Matches are ranked by shared courses first, then study times and places.
             </p>
-            <button 
-              onClick={() => window.location.href = '/matches'}
-              style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                color: 'white',
-                border: '2px solid rgba(255, 255, 255, 0.3)',
-                padding: '0.75rem 1.5rem',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '1rem',
-                transition: 'all 0.3s ease'
-              }}
-              onMouseOver={e => e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)'}
-              onMouseOut={e => e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)'}
-            >
-              Find My Matches
-            </button>
-          </div>
-
-          {/* Stats Card */}
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '1rem',
-            padding: '2rem',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-          }}>
-            <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1.5rem', margin: '0 0 1.5rem 0' }}>
-              Platform Stats
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#6b7280' }}>Total Students</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#059669' }}>{stats.totalStudents}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#6b7280' }}>Your Courses</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#dc2626' }}>{stats.coursesCount}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#6b7280' }}>Study Spots</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#7c3aed' }}>{stats.spotsCount}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Profile Summary Card */}
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '1rem',
-            padding: '2rem',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            gridColumn: 'span 1'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1f2937', margin: 0 }}>
-                Profile Summary
-              </h3>
-              <button
-                onClick={() => window.location.href = '/edit-profile'}
-                style={{
-                  backgroundColor: 'transparent',
-                  color: '#6366f1',
-                  border: '2px solid #6366f1',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '0.5rem',
-                  cursor: 'pointer',
-                  fontWeight: '500',
-                  fontSize: '0.9rem'
-                }}
-              >
-                ✏️ Edit
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div>
-                <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>College:</span>
-                <p style={{ color: '#1f2937', fontWeight: '500', margin: '0.25rem 0 0 0' }}>{user.college || 'Not specified'}</p>
-              </div>
-              <div>
-                <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>Department:</span>
-                <p style={{ color: '#1f2937', fontWeight: '500', margin: '0.25rem 0 0 0' }}>{user.department || 'Not specified'}</p>
-              </div>
-              <div>
-                <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>Email:</span>
-                <p style={{ color: '#1f2937', fontWeight: '500', margin: '0.25rem 0 0 0' }}>{user.email}</p>
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* Detailed Profile Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
-          
-          {/* Courses Card */}
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '1rem',
-            padding: '2rem',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-          }}>
-            <h3 style={{ fontSize: '1.3rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1rem', margin: '0 0 1rem 0' }}>
-              📚 My Courses
-            </h3>
-            <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-              {user.course_ids && user.course_ids.length > 0 ? (
-                user.course_ids.map((courseCode, index) => (
-                  <div key={index} style={{
-                    backgroundColor: '#f3f4f6',
-                    padding: '0.75rem',
-                    borderRadius: '0.5rem',
-                    marginBottom: '0.75rem',
-                    border: '1px solid #e5e7eb'
-                  }}>
-                    <div style={{
-                      fontSize: '0.85rem',
-                      color: '#6366f1',
-                      fontWeight: '600',
-                      marginBottom: '0.25rem'
-                    }}>
-                      {courseCode}
-                    </div>
-                    <div style={{
-                      fontSize: '0.9rem',
-                      color: '#374151',
-                      fontWeight: '500'
-                    }}>
-                      {courseNames[courseCode] || 'Loading...'}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p style={{ color: '#9ca3af', fontStyle: 'italic' }}>No courses selected yet</p>
-              )}
+        <div className="grid-2">
+          <section className="card" aria-labelledby="courses-h">
+            <div className="card-header">
+              <h2 id="courses-h" className="card-title">Your courses</h2>
+              <Link to="/edit-profile" className="btn btn-ghost" aria-label="Edit courses">
+                <Icon name="edit" size={16} /> Edit
+              </Link>
             </div>
-          </div>
+            {user.course_ids?.length ? (
+              <ul className="course-list">
+                {user.course_ids.map(code => (
+                  <li key={code}>
+                    {courseNames[code] && courseNames[code] !== code && <span className="code">{code}</span>}
+                    <span className="name">{courseNames[code] || code}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="none">No courses yet. Add some to start matching.</p>
+            )}
+          </section>
 
-          {/* Study Preferences Card */}
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '1rem',
-            padding: '2rem',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-          }}>
-            <h3 style={{ fontSize: '1.3rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1rem', margin: '0 0 1rem 0' }}>
-              ⚙️ Study Preferences
-            </h3>
-            
-            <div style={{ marginBottom: '1.5rem' }}>
-              <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', margin: '0 0 0.5rem 0' }}>
-                📍 Preferred Study Spots
-              </h4>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                {user.study_spots && user.study_spots.length > 0 ? (
-                  user.study_spots.map((spot, index) => (
-                    <span key={index} style={{
-                      backgroundColor: '#dbeafe',
-                      color: '#1e40af',
-                      padding: '0.25rem 0.5rem',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.8rem',
-                      fontWeight: '500'
-                    }}>
-                      {spot}
-                    </span>
-                  ))
-                ) : (
-                  <p style={{ color: '#9ca3af', fontStyle: 'italic' }}>No study spots selected</p>
-                )}
-              </div>
+          <section className="card" aria-labelledby="prefs-h">
+            <div className="card-header">
+              <h2 id="prefs-h" className="card-title">Study preferences</h2>
+              <Link to="/edit-profile" className="btn btn-ghost" aria-label="Edit study preferences">
+                <Icon name="edit" size={16} /> Edit
+              </Link>
             </div>
-
-            <div>
-              <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem', margin: '0 0 0.5rem 0' }}>
-                🕐 Preferred Study Times
-              </h4>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                {user.study_times && user.study_times.length > 0 ? (
-                  user.study_times.map((time, index) => (
-                    <span key={index} style={{
-                      backgroundColor: '#fef3c7',
-                      color: '#92400e',
-                      padding: '0.25rem 0.5rem',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.8rem',
-                      fontWeight: '500'
-                    }}>
-                      {time}
-                    </span>
-                  ))
-                ) : (
-                  <p style={{ color: '#9ca3af', fontStyle: 'italic' }}>No study times selected</p>
-                )}
-              </div>
+            <div className="section-label"><Icon name="pin" size={13} /> Places</div>
+            <div className="chips" style={{ marginBottom: 18 }}>
+              {user.study_spots?.length ? user.study_spots.map(s => <span key={s} className="chip">{s}</span>)
+                : <span className="none">None selected</span>}
             </div>
-          </div>
+            <div className="section-label"><Icon name="clock" size={13} /> Times</div>
+            <div className="chips" style={{ marginBottom: 18 }}>
+              {user.study_times?.length ? user.study_times.map(t => <span key={t} className="chip">{t}</span>)
+                : <span className="none">None selected</span>}
+            </div>
+            <div className="section-label"><Icon name="user" size={13} /> Department</div>
+            <p className="small">{user.department || 'Not set'}</p>
+          </section>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
 

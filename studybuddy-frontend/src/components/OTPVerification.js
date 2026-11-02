@@ -1,267 +1,122 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { api } from '../api';
+import { AuthLayout, Alert, Icon, Spinner } from './ui';
 
-// API Base URL - use environment variable or default to production
-const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+const RESEND_SECONDS = 60; // matches the backend's resend cooldown
+const CODE_LIFETIME = 600;
 
-function OTPVerification({ email, onVerified, onBack, purpose = 'registration' }) {
+function OTPVerification({ email, onVerified, onBack, purpose = 'registration', busy = false, error: outerError = '' }) {
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [timeLeft, setTimeLeft] = useState(600); // 10 minutes in seconds
-  const [canResend, setCanResend] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [sentAt, setSentAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prevTime) => {
-        if (prevTime <= 1) {
-          setCanResend(true);
-          return 0;
-        }
-        return prevTime - 1;
-      });
-    }, 1000);
-
+    inputRef.current?.focus();
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  const elapsed = Math.floor((now - sentAt) / 1000);
+  const resendIn = Math.max(0, RESEND_SECONDS - elapsed);
+  const expiresIn = Math.max(0, CODE_LIFETIME - elapsed);
+  const working = loading || busy;
 
-  const handleVerifyOTP = async (e) => {
+  async function verify(e) {
     e.preventDefault();
     setError('');
-    setSuccess('');
-
-    if (!otp || otp.length !== 6) {
-      setError('Please enter a valid 6-digit OTP');
+    setNotice('');
+    if (otp.length !== 6) {
+      setError('Enter the 6-digit code from your email.');
       return;
     }
-
     setLoading(true);
-
     try {
-      const response = await fetch(`${API_BASE}/verify_otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, otp })
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setSuccess('Email verified successfully!');
-        setTimeout(() => {
-          onVerified();
-        }, 1500);
-      } else {
-        setError(data.error || 'Verification failed');
-      }
+      await api('/verify_otp', { method: 'POST', body: { email, otp } });
+      onVerified();
     } catch (err) {
-      setError('Network error. Please try again.');
-      console.error('OTP verification error:', err);
+      setError(err.message);
+      setOtp('');
+      inputRef.current?.focus();
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleResendOTP = async () => {
+  async function resend() {
     setError('');
-    setSuccess('');
+    setNotice('');
     setLoading(true);
-
     try {
-      const response = await fetch(`${API_BASE}/send_otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email })
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setSuccess('New OTP sent to your email!');
-        setTimeLeft(600); // Reset timer
-        setCanResend(false);
-      } else {
-        setError(data.error || 'Failed to resend OTP');
-      }
+      await api('/send_otp', { method: 'POST', body: { email } });
+      setSentAt(Date.now());
+      setNow(Date.now());
+      setOtp('');
+      setNotice('We sent a new code. Older codes no longer work.');
     } catch (err) {
-      setError('Network error. Please try again.');
-      console.error('Resend OTP error:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  const mm = Math.floor(expiresIn / 60);
+  const ss = String(expiresIn % 60).padStart(2, '0');
 
   return (
-    <div style={{ backgroundColor: '#f5f7fa', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{
-        backgroundColor: 'white',
-        borderRadius: '1rem',
-        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
-        padding: '3rem',
-        width: '100%',
-        maxWidth: '500px',
-        textAlign: 'center'
-      }}>
-        {/* Header */}
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📧</div>
-          <h2 style={{ color: '#1f2937', fontSize: '1.8rem', fontWeight: 'bold', margin: '0 0 0.5rem 0' }}>
-            Verify Your Email
-          </h2>
-          <p style={{ color: '#6b7280', fontSize: '1rem', margin: 0 }}>
-            We've sent a 6-digit verification code to
-          </p>
-          <p style={{ color: '#6366f1', fontWeight: '600', fontSize: '1.1rem', margin: '0.5rem 0 0 0' }}>
-            {email}
-          </p>
-        </div>
+    <AuthLayout>
+      <div className="card">
+        <div className="icon-circle"><Icon name="mail" size={22} /></div>
+        <h1>Check your email</h1>
+        <p className="lead">
+          We sent a 6-digit code to <strong style={{ color: 'var(--text)' }}>{email}</strong>.
+          {purpose === 'registration' ? ' Enter it to create your account.' : ' Enter it to log in.'}
+        </p>
 
-        {/* OTP Form */}
-        <form onSubmit={handleVerifyOTP} style={{ marginBottom: '2rem' }}>
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label htmlFor="otp" style={{ display: 'block', color: '#374151', fontWeight: '600', marginBottom: '0.5rem' }}>
-              Enter Verification Code
-            </label>
-            <input
-              id="otp"
-              type="text"
-              value={otp}
-              onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="000000"
-              maxLength="6"
-              style={{
-                width: '100%',
-                padding: '1rem',
-                border: '2px solid #e5e7eb',
-                borderRadius: '0.5rem',
-                fontSize: '1.5rem',
-                textAlign: 'center',
-                letterSpacing: '0.5rem',
-                fontWeight: 'bold',
-                color: '#1f2937'
-              }}
-              onFocus={(e) => e.target.style.borderColor = '#6366f1'}
-              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
-            />
+        <form onSubmit={verify} noValidate>
+          <div className="stack">
+            <Alert>{outerError || error}</Alert>
+            <Alert type="success">{notice}</Alert>
+            <div className="field">
+              <label className="label" htmlFor="otp">Verification code</label>
+              <input
+                id="otp"
+                ref={inputRef}
+                className="input input-otp"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]*"
+                maxLength={6}
+                placeholder="••••••"
+                value={otp}
+                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                aria-describedby="otp-hint"
+              />
+              <span id="otp-hint" className="hint">
+                {expiresIn > 0 ? `Code expires in ${mm}:${ss}. You have 5 tries.` : 'This code has expired. Request a new one.'}
+              </span>
+            </div>
+            <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={working || otp.length !== 6}>
+              {working ? <><Spinner /> Checking…</> : purpose === 'registration' ? 'Verify and create account' : 'Verify and log in'}
+            </button>
           </div>
-
-          {error && (
-            <div style={{
-              backgroundColor: '#fef2f2',
-              border: '1px solid #fecaca',
-              borderRadius: '0.5rem',
-              padding: '0.75rem',
-              marginBottom: '1rem',
-              color: '#dc2626',
-              fontSize: '0.9rem'
-            }}>
-              {error}
-            </div>
-          )}
-
-          {success && (
-            <div style={{
-              backgroundColor: '#f0fdf4',
-              border: '1px solid #bbf7d0',
-              borderRadius: '0.5rem',
-              padding: '0.75rem',
-              marginBottom: '1rem',
-              color: '#166534',
-              fontSize: '0.9rem'
-            }}>
-              {success}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading || otp.length !== 6}
-            style={{
-              width: '100%',
-              backgroundColor: (loading || otp.length !== 6) ? '#d1d5db' : '#6366f1',
-              color: 'white',
-              border: 'none',
-              padding: '1rem 2rem',
-              borderRadius: '0.5rem',
-              fontSize: '1.1rem',
-              fontWeight: '600',
-              cursor: (loading || otp.length !== 6) ? 'not-allowed' : 'pointer',
-              marginBottom: '1rem'
-            }}
-          >
-            {loading ? 'Verifying...' : 'Verify Email'}
-          </button>
         </form>
 
-        {/* Timer and Resend */}
-        <div style={{ marginBottom: '2rem' }}>
-          {timeLeft > 0 ? (
-            <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: 0 }}>
-              Code expires in <span style={{ color: '#ef4444', fontWeight: '600' }}>{formatTime(timeLeft)}</span>
-            </p>
-          ) : (
-            <p style={{ color: '#ef4444', fontSize: '0.9rem', margin: 0 }}>
-              Code has expired
-            </p>
-          )}
-          
-          <button
-            onClick={handleResendOTP}
-            disabled={!canResend || loading}
-            style={{
-              backgroundColor: 'transparent',
-              color: canResend && !loading ? '#6366f1' : '#9ca3af',
-              border: 'none',
-              padding: '0.5rem',
-              fontSize: '0.9rem',
-              fontWeight: '600',
-              cursor: canResend && !loading ? 'pointer' : 'not-allowed',
-              textDecoration: canResend && !loading ? 'underline' : 'none',
-              marginTop: '0.5rem'
-            }}
-          >
-            {loading ? 'Sending...' : 'Resend Code'}
+        <div className="row-between" style={{ marginTop: 20 }}>
+          <button type="button" className="btn btn-ghost" onClick={onBack}>
+            <Icon name="arrowLeft" size={16} /> Change email
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={resend} disabled={working || resendIn > 0}>
+            {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
           </button>
         </div>
-
-        {/* Back Button */}
-        <button
-          onClick={onBack}
-          style={{
-            backgroundColor: 'transparent',
-            color: '#6b7280',
-            border: '1px solid #d1d5db',
-            padding: '0.75rem 1.5rem',
-            borderRadius: '0.5rem',
-            fontSize: '1rem',
-            fontWeight: '500',
-            cursor: 'pointer'
-          }}
-          onMouseOver={(e) => {
-            e.target.style.backgroundColor = '#f9fafb';
-            e.target.style.borderColor = '#9ca3af';
-          }}
-          onMouseOut={(e) => {
-            e.target.style.backgroundColor = 'transparent';
-            e.target.style.borderColor = '#d1d5db';
-          }}
-        >
-          ← Back to {purpose === 'registration' ? 'Registration' : 'Login'}
-        </button>
       </div>
-    </div>
+      <p className="auth-footer">Can't find it? Check your spam folder.</p>
+    </AuthLayout>
   );
 }
 
 export default OTPVerification;
-
-
-

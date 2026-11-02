@@ -1,133 +1,94 @@
 import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, isValidNthuEmail } from '../api';
 import OTPVerification from './OTPVerification';
-
-// API Base URL - use environment variable or default to production
-const API_BASE = process.env.REACT_APP_API_URL || 'https://study-buddy-final.onrender.com';
+import { AuthLayout, Alert, Spinner } from './ui';
 
 function Login() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState('email'); // 'email' or 'otp'
+  const [step, setStep] = useState('email'); // 'email' | 'otp'
+  const [loginError, setLoginError] = useState('');
 
-  function validateNTHUEmail(email) {
-    return email && email.trim().toLowerCase().endsWith('.nthu.edu.tw');
-  }
-
-  function handleLogin(e) {
+  async function sendCode(e) {
     e.preventDefault();
     setError('');
-    
-    if (!email) {
-      setError('Please enter your NTHU email address.');
+    if (!isValidNthuEmail(email)) {
+      setError('Use your NTHU email address (ending in .nthu.edu.tw).');
       return;
     }
-    
-    if (!validateNTHUEmail(email)) {
-      setError('Please use a valid NTHU email address ending with .nthu.edu.tw');
-      return;
+    setLoading(true);
+    try {
+      await api('/send_otp', { method: 'POST', body: { email: email.trim() } });
+      setStep('otp');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-    
+  }
+
+  async function completeLogin() {
+    setLoginError('');
     setLoading(true);
-    
-    // First, send OTP to verify it's really the user
-    fetch(`${API_BASE}/send_otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ email })
-    })
-      .then(res => res.json())
-      .then(data => {
-        setLoading(false);
-        if (data.error) {
-          setError(data.error);
-        } else {
-          // Move to OTP verification step
-          setStep('otp');
-        }
-      })
-      .catch(err => {
-        setLoading(false);
-        setError('Network error. Please try again.');
-        console.error('Send OTP error:', err);
-      });
+    try {
+      await api('/login', { method: 'POST', body: { email: email.trim() } });
+      navigate('/dashboard');
+    } catch (err) {
+      setLoginError(err.message);
+      setLoading(false);
+    }
   }
 
-  function handleOTPVerified() {
-    // After OTP is verified, complete the login
-    setLoading(true);
-    
-    fetch(`${API_BASE}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ email })
-    })
-      .then(res => res.json())
-      .then(data => {
-        setLoading(false);
-        if (data.error) {
-          setError(data.error);
-          setStep('email'); // Go back to email input if login fails
-        } else {
-          // Successful login, redirect to dashboard
-          console.log('Login successful:', data);
-          window.location.href = '/dashboard';
-        }
-      })
-      .catch(err => {
-        setLoading(false);
-        setError('Network error during login. Please try again.');
-        setStep('email');
-        console.error('Login error:', err);
-      });
-  }
-
-  function handleBackToEmail() {
-    setStep('email');
-    setError('');
-  }
-
-  // Show OTP verification screen
   if (step === 'otp') {
     return (
       <OTPVerification
-        email={email}
-        onVerified={handleOTPVerified}
-        onBack={handleBackToEmail}
+        email={email.trim()}
         purpose="login"
+        busy={loading}
+        error={loginError}
+        onVerified={completeLogin}
+        onBack={() => {
+          setStep('email');
+          setLoginError('');
+        }}
       />
     );
   }
 
-  // Show email input screen
   return (
-    <div className="auth-container">
-      <form className="auth-card" onSubmit={handleLogin}>
-        <div className="auth-header">
-          <span className="auth-logo">StudyBuddy</span>
-          <h1>Login</h1>
-        </div>
-        {error && <div className="error-message" style={{ display: 'block' }}>{error}</div>}
-        <div className="form-group">
-          <label htmlFor="email">NTHU Email Address</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="yourname@gapp.nthu.edu.tw"
-          />
-          <small style={{ color: '#666', fontSize: '0.8em' }}>
-            Use your official NTHU email address to login
-          </small>
-        </div>
-        <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign In'}
-        </button>
-      </form>
-    </div>
+    <AuthLayout>
+      <div className="card">
+        <h1>Log in</h1>
+        <p className="lead">We'll email you a one-time code. No password needed.</p>
+        <form onSubmit={sendCode} noValidate>
+          <div className="stack">
+            <Alert>{error}</Alert>
+            <div className="field">
+              <label className="label" htmlFor="email">NTHU email</label>
+              <input
+                id="email"
+                className="input"
+                type="email"
+                autoComplete="email"
+                placeholder="you@gapp.nthu.edu.tw"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                aria-invalid={!!error}
+              />
+            </div>
+            <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={loading}>
+              {loading ? <><Spinner /> Sending code…</> : 'Email me a code'}
+            </button>
+          </div>
+        </form>
+      </div>
+      <p className="auth-footer">
+        New to StudyBuddy? <Link to="/register">Create a profile</Link>
+      </p>
+    </AuthLayout>
   );
 }
 
