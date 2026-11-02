@@ -27,7 +27,7 @@ function Matches() {
         setUser(userData);
 
         // Then get matches for this user
-        const matchesRes = await fetch(`${API_BASE}/get_matches/${userData._id}`, { 
+        const matchesRes = await fetch(`${API_BASE}/get_matches`, {
           credentials: 'include' 
         });
         if (!matchesRes.ok) {
@@ -100,24 +100,12 @@ ${user?.email || ''}`;
     setEmailSent(false);
 
     try {
-      const sharedCourses = user.course_ids?.filter(c => match.course_ids?.includes(c)) || [];
-      const sharedSpots = user.study_spots?.filter(s => match.study_spots?.includes(s)) || [];
-      const sharedTimes = user.study_times?.filter(t => match.study_times?.includes(t)) || [];
-
+      // The server looks up the partner and works out what you share.
       const response = await fetch(`${API_BASE}/send_partner_email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          recipient_email: match.email,
-          recipient_name: match.name,
-          sender_name: user.name,
-          sender_email: user.email,
-          sender_department: user.department,
-          shared_courses: sharedCourses,
-          shared_spots: sharedSpots,
-          shared_times: sharedTimes
-        })
+        body: JSON.stringify({ partner_id: match.student_id })
       });
 
       const data = await response.json();

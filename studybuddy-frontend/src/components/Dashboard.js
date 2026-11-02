@@ -17,9 +17,9 @@ function Dashboard() {
         const userData = await meRes.json();
         setUser(userData);
 
-        const studentsRes = await fetch(`${API_BASE}/get_students`, { credentials: 'include' });
-        if (!studentsRes.ok) throw new Error('Failed to load students');
-        const studentsData = await studentsRes.json();
+        const statsRes = await fetch(`${API_BASE}/stats`, { credentials: 'include' });
+        if (!statsRes.ok) throw new Error('Failed to load stats');
+        const statsData = await statsRes.json();
 
         // Fetch course names for user's courses
         if (userData.course_ids && userData.course_ids.length > 0) {
@@ -36,7 +36,7 @@ function Dashboard() {
         }
 
         setStats({
-          totalStudents: studentsData.count,
+          totalStudents: statsData.total_students,
           coursesCount: userData.course_ids?.length || 0,
           spotsCount: userData.study_spots?.length || 0,
         });

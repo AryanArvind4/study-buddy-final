@@ -6,3 +6,4 @@ xgboost
 flask-mail
 gunicorn
 requests
+certifi

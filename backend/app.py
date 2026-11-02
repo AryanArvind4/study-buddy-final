@@ -4,102 +4,113 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 from bson import ObjectId
+from bson.errors import InvalidId
+from werkzeug.exceptions import HTTPException
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from datetime import datetime, timedelta
 from functools import wraps
+import certifi
+import hashlib
+import hmac
+import html
 import re
-import random
-import string
+import secrets
 import threading
 import requests
-import json
 
 load_dotenv()
 
-# Setup MongoDB connection
-MONGO_URI = os.getenv("MONGO_URI")
-print(f"🔄 Connecting to MongoDB Atlas...")
-print(f"URI: {MONGO_URI[:50]}..." if MONGO_URI and len(MONGO_URI) > 50 else f"URI: {MONGO_URI}")
+IS_DEV = os.getenv("FLASK_ENV") == "development"
 
-# Ensure URI has tlsAllowInvalidCertificates parameter for Render compatibility
-if MONGO_URI:
-    if "tlsAllowInvalidCertificates" not in MONGO_URI:
-        separator = "&" if "?" in MONGO_URI else "?"
-        MONGO_URI = f"{MONGO_URI}{separator}tls=true&tlsAllowInvalidCertificates=true"
-        print("Added TLS parameters to connection string")
+# Setup MongoDB connection (certificates are verified against certifi's CA bundle)
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI is not set")
+print("🔄 Connecting to MongoDB...")
 
 try:
-    # Simplified connection - let the URI parameters handle all TLS settings
     client = MongoClient(
         MONGO_URI,
+        tlsCAFile=certifi.where(),
         serverSelectionTimeoutMS=20000,
         connectTimeoutMS=20000,
         socketTimeoutMS=20000
     )
-    # Test the connection
     client.server_info()
     print("✅ MongoDB connected successfully!")
 except Exception as e:
-    print(f"❌ MongoDB connection failed: {e}")
-    print("\n🔍 Troubleshooting:")
-    print("1. Check MongoDB Atlas Network Access - whitelist 0.0.0.0/0")
-    print("2. Verify credentials in MONGO_URI")
-    print("3. Current URI format:", MONGO_URI[:80] if MONGO_URI else "None")
-    exit(1)
+    print(f"❌ MongoDB connection failed: {type(e).__name__}")
+    print("Check MONGO_URI credentials and MongoDB Atlas network access.")
+    raise SystemExit(1)
 
 db = client["study_partner"]
 students_collection = db["students"]
 courses_collection = db["courses"]
-otp_collection = db["otps"]  # New collection for storing OTPs
+otp_collection = db["otps"]
+partner_email_log = db["partner_email_log"]
 
 # Initialize Flask app
 app = Flask(__name__)
 
-# Manual CORS handler - allows all Vercel domains and localhost
+# Exact list of frontend origins allowed to make credentialed requests.
+# Override with ALLOWED_ORIGINS="https://a.com,https://b.com" (e.g. to add a Vercel preview URL).
+DEFAULT_ALLOWED_ORIGINS = [
+    "https://studybuddynthu.org",
+    "https://www.studybuddynthu.org",
+    "https://study-buddy-final-orcin.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+ALLOWED_ORIGINS = {
+    o.strip().rstrip("/")
+    for o in (os.getenv("ALLOWED_ORIGINS") or ",".join(DEFAULT_ALLOWED_ORIGINS)).split(",")
+    if o.strip()
+}
+
+ADMIN_EMAILS = {
+    e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()
+}
+
+
+def _apply_cors(response, origin):
+    response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Max-Age'] = '3600'
+
+
 @app.after_request
 def add_cors_headers(response):
+    response.headers['Vary'] = 'Origin'
     origin = request.headers.get('Origin')
-    
-    # Allow localhost, Vercel domains, and the new custom domain
-    if origin and (
-        origin.startswith('http://localhost:') or
-        origin.startswith('http://127.0.0.1:') or
-        '.vercel.app' in origin or
-        'studybuddynthu.org' in origin
-    ):
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Max-Age'] = '3600'
-        response.headers['Vary'] = 'Origin'
-    
+    if origin in ALLOWED_ORIGINS:
+        _apply_cors(response, origin)
     return response
 
-# Handle preflight OPTIONS requests
+
 @app.before_request
-def handle_preflight():
+def check_origin():
+    origin = request.headers.get('Origin')
     if request.method == 'OPTIONS':
         response = app.make_default_options_response()
-        origin = request.headers.get('Origin')
-        
-        if origin and (
-            origin.startswith('http://localhost:') or
-            origin.startswith('http://127.0.0.1:') or
-            '.vercel.app' in origin or
-            'studybuddynthu.org' in origin
-        ):
-            response.headers['Access-Control-Allow-Origin'] = origin
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-            response.headers['Access-Control-Max-Age'] = '3600'
-        
+        if origin in ALLOWED_ORIGINS:
+            _apply_cors(response, origin)
         return response
+    # CSRF protection: browsers always send Origin on cross-site state-changing requests,
+    # so reject those that come from a site we don't trust.
+    if request.method in ('POST', 'PUT', 'DELETE') and origin and origin not in ALLOWED_ORIGINS:
+        return jsonify({"error": "Origin not allowed"}), 403
 
 # Session configuration
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "b7328b8e99a64cc38dc6b1b52d4f553a")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if not IS_DEV:
+        raise RuntimeError("SECRET_KEY is not set. Set it to a long random value in the environment.")
+    SECRET_KEY = secrets.token_hex(32)
+    print("⚠️ SECRET_KEY not set; using a temporary key (development only)")
+app.config["SECRET_KEY"] = SECRET_KEY
 app.config["SESSION_COOKIE_SECURE"] = True  # Only send cookies over HTTPS
 app.config["SESSION_COOKIE_HTTPONLY"] = True  # Prevent JavaScript access to session cookie
 app.config["SESSION_COOKIE_SAMESITE"] = "None"  # Allow cross-site cookies for CORS
@@ -329,9 +340,60 @@ def is_valid_nthu_email(email):
     return email.endswith('.nthu.edu.tw')
 
 
+OTP_TTL = timedelta(minutes=10)
+OTP_MAX_ATTEMPTS = 5            # wrong guesses allowed per code
+OTP_RESEND_COOLDOWN = timedelta(seconds=60)
+OTP_MAX_SENDS_PER_HOUR = 5
+PARTNER_EMAILS_PER_DAY = 10
+
+
+def json_body():
+    """Return the request's JSON object, or {} if missing or not an object."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def get_str(data, key, max_len=200):
+    """Read a string field; anything else (dicts, lists, numbers) becomes ''."""
+    value = data.get(key)
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:max_len]
+
+
+def parse_object_id(value):
+    try:
+        return ObjectId(value)
+    except (InvalidId, TypeError):
+        return None
+
+
+def validate_course_ids(course_ids):
+    if not isinstance(course_ids, list) or len(course_ids) > 30:
+        return False
+    return all(isinstance(c, str) and 0 < len(c.strip()) <= 30 for c in course_ids)
+
+
+def public_profile(student):
+    """Fields of a student that other students may see (no email)."""
+    return {
+        "student_id": str(student["_id"]),
+        "name": student.get("name", ""),
+        "college": student.get("college", ""),
+        "department": student.get("department", ""),
+        "course_ids": student.get("course_ids", []),
+        "study_spots": student.get("study_spots", []),
+        "study_times": student.get("study_times", []),
+    }
+
+
 def generate_otp():
-    """Generate a 6-digit OTP"""
-    return ''.join(random.choices(string.digits, k=6))
+    """Generate a 6-digit OTP using a cryptographically secure source"""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def hash_otp(email, otp):
+    return hmac.new(app.config["SECRET_KEY"].encode(), f"{email}:{otp}".encode(), hashlib.sha256).hexdigest()
 
 
 def send_otp_email_async(app_instance, email, otp):
@@ -409,98 +471,119 @@ def send_otp_email_async(app_instance, email, otp):
     thread.start()
 
 def send_otp_email(email, otp):
-    """Send OTP via email - always prints to console and tries email async"""
-    # Always print OTP to console/logs as backup
-    print("\n" + "="*80, flush=True)
-    print(f"📧 OTP for {email}: {otp}", flush=True)
-    print(f"⏰ Valid for 10 minutes", flush=True)
-    print("="*80 + "\n", flush=True)
-    
-    # Also write to stderr for visibility
-    import sys
-    sys.stderr.write(f"\n{'='*80}\n")
-    sys.stderr.write(f"📧 OTP for {email}: {otp}\n")
-    sys.stderr.write(f"⏰ Valid for 10 minutes\n")
-    sys.stderr.write(f"{'='*80}\n\n")
-    sys.stderr.flush()
-    
-    # Try to send email asynchronously (non-blocking) with proper app context
-    if mail is not None:
-        print(f"📤 Attempting to send email to {email} in background...", flush=True)
-        send_otp_email_async(app, email, otp)
-    
-    # Always return True immediately (don't wait for email)
+    """Send the OTP by email in the background. The code itself is never logged."""
+    print("📤 Sending verification email in background...", flush=True)
+    send_otp_email_async(app, email, otp)
     return True
 
 
 def store_otp(email, otp):
-    """Store OTP in database with expiration"""
-    expiry_time = datetime.utcnow() + timedelta(minutes=10)  # 10 minutes expiry
+    """Store a new OTP (hashed). Returns an error message if the email is rate-limited."""
+    now = datetime.utcnow()
+    existing = otp_collection.find_one({"email": email})
+    window_start = now
+    send_count = 1
+    if existing:
+        if existing.get("created_at") and now - existing["created_at"] < OTP_RESEND_COOLDOWN:
+            return "Please wait a minute before requesting another code."
+        if existing.get("window_start") and now - existing["window_start"] < timedelta(hours=1):
+            window_start = existing["window_start"]
+            send_count = existing.get("send_count", 0) + 1
+            if send_count > OTP_MAX_SENDS_PER_HOUR:
+                return "Too many codes requested. Please try again in an hour."
     otp_collection.update_one(
         {"email": email},
         {
             "$set": {
                 "email": email,
-                "otp": otp,
-                "created_at": datetime.utcnow(),
-                "expires_at": expiry_time,
-                "verified": False
-            }
+                "otp_hash": hash_otp(email, otp),
+                "created_at": now,
+                "expires_at": now + OTP_TTL,
+                "attempts": 0,
+                "verified": False,
+                "window_start": window_start,
+                "send_count": send_count,
+            },
+            "$unset": {"otp": ""},
         },
         upsert=True
     )
+    return None
 
 
 def verify_otp(email, otp):
-    """Verify OTP for given email"""
+    """Check an OTP. Wrong guesses are counted; the code is burned after too many."""
+    if not re.fullmatch(r"\d{6}", otp):
+        return False
     otp_doc = otp_collection.find_one({
         "email": email,
-        "otp": otp,
         "verified": False,
-        "expires_at": {"$gt": datetime.utcnow()}
+        "expires_at": {"$gt": datetime.utcnow()},
     })
-    
-    if otp_doc:
-        # Mark OTP as verified
-        otp_collection.update_one(
-            {"_id": otp_doc["_id"]},
-            {"$set": {"verified": True}}
-        )
-        return True
-    return False
+    if not otp_doc or otp_doc.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
+        return False
+    if not hmac.compare_digest(otp_doc.get("otp_hash", ""), hash_otp(email, otp)):
+        otp_collection.update_one({"_id": otp_doc["_id"]}, {"$inc": {"attempts": 1}})
+        return False
+    # Only one request can flip verified False -> True for this code.
+    result = otp_collection.update_one(
+        {"_id": otp_doc["_id"], "verified": False},
+        {"$set": {"verified": True, "expires_at": datetime.utcnow() + OTP_TTL}},
+    )
+    return result.modified_count == 1
 
 
-def validate_student_data(data):
-    required_fields = ["name", "email", "college", "department", "course_ids", "study_spots", "study_times"]
+def consume_verified_otp(email):
+    """Use up a verified OTP for this email. Returns True once per verification.
 
-    for field in required_fields:
-        if field not in data:
-            return False, f"Missing required field: {field}"
-    
-    # Validate NTHU email
-    email = data.get("email", "").strip().lower()
+    The browser that verified the code must be the one using it (checked via the
+    signed session), so nobody else can race to use someone's verified code.
+    """
+    if session.get("otp_verified_email") != email:
+        return False
+    doc = otp_collection.find_one_and_delete({
+        "email": email,
+        "verified": True,
+        "expires_at": {"$gt": datetime.utcnow()},
+    })
+    session.pop("otp_verified_email", None)
+    return doc is not None
+
+
+def clean_student_data(data):
+    """Validate registration input and return (student_doc, error)."""
+    name = " ".join(get_str(data, "name", 80).split())  # also removes newlines
+    email = get_str(data, "email").lower()
+    college = get_str(data, "college")
+    department = get_str(data, "department")
+    course_ids = data.get("course_ids")
+    study_spots = data.get("study_spots")
+    study_times = data.get("study_times")
+
+    if not name:
+        return None, "Name is required"
     if not is_valid_nthu_email(email):
-        return False, "Please use a valid NTHU email address ending with .nthu.edu.tw"
-    
-    # Only check email uniqueness on registration
-    if students_collection.find_one({"email": email}):
-        return False, "Email already registered"
-
-    for field in ["course_ids", "study_spots", "study_times"]:
-        if not isinstance(data[field], list) or len(data[field]) == 0:
-            return False, f"{field} must be a non-empty list"
-
-    # Validate college and department
-    college = data.get("college")
-    department = data.get("department")
-    
+        return None, "Please use a valid NTHU email address ending with .nthu.edu.tw"
     if college not in COLLEGE_DEPARTMENTS:
-        return False, "Invalid college selected"
-    
+        return None, "Invalid college selected"
     if department not in COLLEGE_DEPARTMENTS[college]:
-        return False, "Invalid department for selected college"
+        return None, "Invalid department for selected college"
+    if not validate_course_ids(course_ids) or not course_ids:
+        return None, "Please select between 1 and 30 courses"
+    if not isinstance(study_spots, list) or not study_spots or any(s not in STUDY_SPOTS for s in study_spots):
+        return None, "Please select valid study spots"
+    if not isinstance(study_times, list) or not study_times or any(t not in STUDY_TIMES for t in study_times):
+        return None, "Please select valid study times"
 
-    return True, "Valid"
+    return {
+        "name": name,
+        "email": email,
+        "college": college,
+        "department": department,
+        "course_ids": list(dict.fromkeys(c.strip() for c in course_ids)),
+        "study_spots": list(dict.fromkeys(study_spots)),
+        "study_times": list(dict.fromkeys(study_times)),
+    }, None
 
 
 # Authentication routes
@@ -508,19 +591,21 @@ def validate_student_data(data):
 
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.json
-    email = (data.get("email") or "").strip().lower()
-    
-    # Validate NTHU email format
+    data = json_body()
+    email = get_str(data, "email").lower()
+
     if not is_valid_nthu_email(email):
         return jsonify({"error": "Please use a valid NTHU email address ending with .nthu.edu.tw"}), 401
-    
-    # Check if user exists
+
     user = students_collection.find_one({"email": email})
     if not user:
         return jsonify({"error": "No account found with this NTHU email. Please register first."}), 401
-    
-    # Create session and login (frontend should call this AFTER OTP verification)
+
+    # The server, not the frontend, decides whether the email was verified.
+    if not consume_verified_otp(email):
+        return jsonify({"error": "Please verify your email with the code we sent you."}), 401
+
+    session.clear()  # drop any pre-login session data
     session.permanent = True  # Make session persistent (better for mobile)
     session["user_id"] = str(user["_id"])
     session["user_email"] = user["email"]
@@ -549,7 +634,8 @@ def me():
         else:
             return jsonify({"error": "User not found"}), 404
     except Exception as e:
-        return jsonify({"error": f"Error fetching user data: {str(e)}"}), 500
+        print(f"Error in /me: {e}")
+        return jsonify({"error": "Error fetching user data"}), 500
 
 
 # Main endpoints
@@ -565,10 +651,9 @@ def home():
                 "login": "POST /login",
                 "logout": "POST /logout",
                 "me": "GET /me",
-                "add_student": "POST /add_student (requires auth)",
-                "get_students": "GET /get_students (requires auth)",
+                "stats": "GET /stats (requires auth)",
                 "get_student": "GET /get_student/<student_id> (requires auth)",
-                "get_matches": "GET /get_matches/<student_id> (requires auth)",
+                "get_matches": "GET /get_matches (requires auth)",
                 "search_courses": "GET /search_courses?q=your_search_term",
                 "get_options": "GET /get_options",
             },
@@ -626,11 +711,13 @@ def search_courses():
 @app.route("/get_course_names", methods=["POST"])
 def get_course_names():
     """Get course names for an array of course codes"""
-    data = request.json
-    course_codes = data.get("course_codes", [])
-    
+    course_codes = json_body().get("course_codes", [])
+
     if not course_codes:
         return jsonify({"courses": {}})
+    if not isinstance(course_codes, list) or len(course_codes) > 100:
+        return jsonify({"error": "course_codes must be a list of up to 100 codes"}), 400
+    course_codes = [c for c in course_codes if isinstance(c, str)]
     
     # Fetch course details from database
     courses = courses_collection.find(
@@ -654,112 +741,83 @@ def get_course_names():
 @app.route("/send_otp", methods=["POST"])
 def send_otp():
     """Send OTP to email for verification"""
-    data = request.json
-    email = (data.get("email") or "").strip().lower()
-    
+    email = get_str(json_body(), "email").lower()
+
     if not is_valid_nthu_email(email):
         return jsonify({"error": "Please use a valid NTHU email address ending with .nthu.edu.tw"}), 400
-    
-    # Generate and store OTP
+
     otp = generate_otp()
-    store_otp(email, otp)
-    
-    # Send OTP via email
-    if send_otp_email(email, otp):
-        return jsonify({"message": "OTP sent successfully to your email"}), 200
-    else:
-        return jsonify({"error": "Failed to send OTP. Please check your email address and try again."}), 500
+    limit_error = store_otp(email, otp)
+    if limit_error:
+        return jsonify({"error": limit_error}), 429
+
+    send_otp_email(email, otp)
+    return jsonify({"message": "OTP sent successfully to your email"}), 200
 
 
 @app.route("/verify_otp", methods=["POST"])
 def verify_otp_endpoint():
     """Verify OTP for email"""
-    data = request.json
-    email = (data.get("email") or "").strip().lower()
-    otp = data.get("otp", "").strip()
-    
+    data = json_body()
+    email = get_str(data, "email").lower()
+    otp = get_str(data, "otp", 10)
+
     if not email or not otp:
         return jsonify({"error": "Email and OTP are required"}), 400
-    
+
     if verify_otp(email, otp):
+        # Remember in this browser's signed session which email it proved it owns.
+        session["otp_verified_email"] = email
         return jsonify({"message": "Email verified successfully"}), 200
-    else:
-        return jsonify({"error": "Invalid or expired OTP"}), 400
+    return jsonify({"error": "Invalid or expired code. After 5 wrong tries, request a new one."}), 400
 
 
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
-    email = (data.get("email") or "").strip().lower()
-    
-    # Check if email is verified
-    otp_doc = otp_collection.find_one({
-        "email": email,
-        "verified": True,
-        "expires_at": {"$gt": datetime.utcnow()}
-    })
-    
-    if not otp_doc:
+    student, error = clean_student_data(json_body())
+    if error:
+        return jsonify({"error": error}), 400
+
+    if students_collection.find_one({"email": student["email"]}):
+        return jsonify({"error": "Email already registered"}), 400
+
+    if not consume_verified_otp(student["email"]):
         return jsonify({"error": "Email not verified. Please verify your email first."}), 400
-    
-    is_valid, message = validate_student_data(data)
-    if not is_valid:
-        return jsonify({"error": message}), 400
-    data["created_at"] = datetime.utcnow()
-    data["email_verified"] = True  # Mark as verified
+
+    student["created_at"] = datetime.utcnow()
+    student["email_verified"] = True
     try:
-        result = students_collection.insert_one(data)
-        # Clean up OTP after successful registration
-        otp_collection.delete_one({"email": email})
+        result = students_collection.insert_one(student)
         return jsonify({"message": "Registration successful", "student_id": str(result.inserted_id)}), 201
     except Exception as e:
-        return jsonify({"error": f"Error saving student: {str(e)}"}), 500
+        print(f"Error saving student: {e}")
+        return jsonify({"error": "Error saving your profile. Please try again."}), 500
 
 
-@app.route("/add_student", methods=["POST"])
+@app.route("/stats", methods=["GET"])
 @login_required
-def add_student():
-    data = request.json
-    is_valid, message = validate_student_data(data)
-    if not is_valid:
-        return jsonify({"error": message}), 400
-    data["created_at"] = datetime.utcnow()
-    try:
-        result = students_collection.insert_one(data)
-        return jsonify({"message": "Student added successfully", "student_id": str(result.inserted_id)}), 201
-    except Exception as e:
-        return jsonify({"error": f"Error saving student: {str(e)}"}), 500
-
-
-@app.route("/get_students", methods=["GET"])
-@login_required
-def get_students():
-    try:
-        students = []
-        for s in students_collection.find():
-            s["_id"] = str(s["_id"])
-            students.append(s)
-        return jsonify({"students": students, "count": len(students)})
-    except Exception as e:
-        return jsonify({"error": f"Error fetching students: {str(e)}"}), 500
+def stats():
+    return jsonify({"total_students": students_collection.count_documents({})})
 
 
 @app.route("/get_student/<student_id>", methods=["GET"])
 @login_required
 def get_student(student_id):
-    try:
-        student = students_collection.find_one({"_id": ObjectId(student_id)})
-        if not student:
-            return jsonify({"error": "Student not found"}), 404
-        student["_id"] = str(student["_id"])
-        return jsonify(student)
-    except Exception as e:
-        return jsonify({"error": f"Error fetching student: {str(e)}"}), 500
+    oid = parse_object_id(student_id)
+    student = students_collection.find_one({"_id": oid}) if oid else None
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+    return jsonify(public_profile(student))
 
 
+@app.route("/get_matches", methods=["GET"])
 @app.route("/get_matches/<student_id>", methods=["GET"])
 @login_required
-def get_matches(student_id):
+def get_matches(student_id=None):
+    # Matches are only ever computed for the logged-in student.
+    student_id = session["user_id"]
+    if request.view_args.get("student_id") not in (None, student_id):
+        return jsonify({"error": "You can only view your own matches"}), 403
     try:
         target = students_collection.find_one({"_id": ObjectId(student_id)})
         if not target:
@@ -793,7 +851,8 @@ def get_matches(student_id):
         top_matches = matches[:3]
         return jsonify({"target_student": target["name"], "matches": top_matches, "total_checked": len(others)})
     except Exception as e:
-        return jsonify({"error": f"Error computing matches: {str(e)}"}), 500
+        print(f"Error computing matches: {e}")
+        return jsonify({"error": "Error computing matches"}), 500
 
 
 @app.route("/send_partner_email", methods=["POST"])
@@ -810,43 +869,57 @@ def send_partner_email():
         if not current_user:
             return jsonify({"error": "User not found"}), 404
         
-        data = request.json
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        partner_email = data.get("partner_email", "").strip()
-        partner_name = data.get("partner_name", "").strip()
-        shared_courses = data.get("shared_courses", [])
-        shared_spots = data.get("shared_spots", [])
-        shared_times = data.get("shared_times", [])
-        
-        if not partner_email:
-            return jsonify({"error": "Partner email is required"}), 400
-        
-        # Validate partner email is NTHU
-        if not is_valid_nthu_email(partner_email):
-            return jsonify({"error": "Invalid partner email"}), 400
-        
+        # The recipient is looked up by ID on the server, so this endpoint can only
+        # email registered students, never an arbitrary address.
+        partner_oid = parse_object_id(get_str(json_body(), "partner_id", 40))
+        partner = students_collection.find_one({"_id": partner_oid}) if partner_oid else None
+        if not partner:
+            return jsonify({"error": "Study partner not found"}), 404
+        if partner["_id"] == current_user["_id"]:
+            return jsonify({"error": "You can't send a request to yourself"}), 400
+
+        now = datetime.utcnow()
+        day_ago = now - timedelta(days=1)
+        if partner_email_log.count_documents({"sender_id": current_user["_id"], "sent_at": {"$gt": day_ago}}) >= PARTNER_EMAILS_PER_DAY:
+            return jsonify({"error": "You've reached today's limit of partner requests. Try again tomorrow."}), 429
+        if partner_email_log.find_one({"sender_id": current_user["_id"], "recipient_id": partner["_id"], "sent_at": {"$gt": day_ago}}):
+            return jsonify({"error": "You already contacted this student in the last 24 hours."}), 429
+
+        partner_email = partner["email"]
+        partner_name = partner.get("name", "there")
+
+        # Shared items come from the database, not from the request.
+        def shared(field):
+            return sorted(set(current_user.get(field, [])) & set(partner.get(field, [])))
+        shared_courses = shared("course_ids")
+        shared_spots = shared("study_spots")
+        shared_times = shared("study_times")
+
         # Format shared items for email
         shared_courses_str = ", ".join(shared_courses) if shared_courses else "various courses"
         shared_spots_str = ", ".join(shared_spots) if shared_spots else "study locations"
         shared_times_str = ", ".join(shared_times) if shared_times else "study times"
-        
+
         # Build email content
         sender_name = current_user.get("name", "A fellow student")
         sender_email = current_user.get("email", "")
         sender_department = current_user.get("department", "")
-        
+
         subject = f"🎓 Study Partner Request from {sender_name} - StudyBuddy"
-        
+
+        # HTML-escaped copies for the HTML body (user-entered text must not become markup)
+        h_partner_name = html.escape(partner_name)
+        h_sender_name = html.escape(sender_name)
+        h_sender_department = html.escape(sender_department)
+
         # Build the shared items section
         shared_items_html = ""
         if shared_courses:
-            shared_items_html += f"<li><strong>Shared Courses:</strong> {shared_courses_str}</li>"
+            shared_items_html += f"<li><strong>Shared Courses:</strong> {html.escape(shared_courses_str)}</li>"
         if shared_spots:
-            shared_items_html += f"<li><strong>Preferred Study Spots:</strong> {shared_spots_str}</li>"
+            shared_items_html += f"<li><strong>Preferred Study Spots:</strong> {html.escape(shared_spots_str)}</li>"
         if shared_times:
-            shared_items_html += f"<li><strong>Available Study Times:</strong> {shared_times_str}</li>"
+            shared_items_html += f"<li><strong>Available Study Times:</strong> {html.escape(shared_times_str)}</li>"
         
         html_body = f"""
         <html>
@@ -857,10 +930,10 @@ def send_partner_email():
             </div>
             
             <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
-                <h2 style="color: #1f2937; margin-top: 0;">Hi {partner_name}! 👋</h2>
-                
+                <h2 style="color: #1f2937; margin-top: 0;">Hi {h_partner_name}! 👋</h2>
+
                 <p style="font-size: 16px;">
-                    <strong>{sender_name}</strong> from <strong>{sender_department}</strong> found your profile on StudyBuddy and would like to connect with you as a study partner!
+                    <strong>{h_sender_name}</strong> from <strong>{h_sender_department}</strong> found your profile on StudyBuddy and would like to connect with you as a study partner!
                 </p>
                 
                 <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -871,12 +944,12 @@ def send_partner_email():
                 </div>
                 
                 <p style="font-size: 16px;">
-                    {sender_name} thinks you'd be great study partners! You could help each other with coursework, prepare for exams, or just have productive study sessions together.
+                    {h_sender_name} thinks you'd be great study partners! You could help each other with coursework, prepare for exams, or just have productive study sessions together.
                 </p>
                 
                 <div style="background: #eff6ff; padding: 15px; border-radius: 8px; border-left: 4px solid #6366f1; margin: 20px 0;">
                     <p style="margin: 0; font-size: 14px;">
-                        <strong>💬 To respond:</strong> Simply reply to this email to get in touch with {sender_name}!
+                        <strong>💬 To respond:</strong> Simply reply to this email to get in touch with {h_sender_name}!
                     </p>
                 </div>
                 
@@ -918,26 +991,32 @@ https://studybuddynthu.org
                 reply_to=sender_email  # KEY: Replies go to the sender, not StudyBuddy
             )
             mail.send(msg)
-            
-            print(f"✅ Partner email sent from {sender_email} to {partner_email}")
+            partner_email_log.insert_one({
+                "sender_id": current_user["_id"],
+                "recipient_id": partner["_id"],
+                "sent_at": now,
+            })
+
+            print("✅ Partner email sent")
             return jsonify({
-                "message": "Email sent successfully! Your study partner will receive your connection request.",
-                "sent_to": partner_email
+                "message": "Email sent successfully! Your study partner will receive your connection request."
             }), 200
-            
+
         except Exception as email_error:
             print(f"❌ Error sending partner email: {email_error}")
             return jsonify({"error": "Failed to send email. Please try again later."}), 500
-        
+
     except Exception as e:
         print(f"Error in send_partner_email: {e}")
-        return jsonify({"error": f"Error sending email: {str(e)}"}), 500
+        return jsonify({"error": "Error sending email. Please try again later."}), 500
 
 
 @app.route("/update_courses_from_nthu", methods=["POST"])
 @login_required
 def update_courses_from_nthu():
     """Fetch latest course data from NTHU's live JSON endpoint and update database"""
+    if session.get("user_email", "").lower() not in ADMIN_EMAILS:
+        return jsonify({"error": "Admin access required"}), 403
     try:
         NTHU_COURSE_URL = "https://www.ccxp.nthu.edu.tw/ccxp/INQUIRE/JH/OPENDATA/open_course_data.json"
         
@@ -969,18 +1048,17 @@ def update_courses_from_nthu():
             if not course_code or not course_name_zh:
                 continue
             
-            # Create course document
+            # Use the same Chinese field names that /search_courses and /get_course_names read
             course_doc = {
-                "code": course_code,
-                "name_zh": course_name_zh,
-                "name_en": course_name_en,
-                "display": f"{course_code} - {course_name_zh}",
+                "科號": course_code,
+                "課程中文名稱": course_name_zh,
+                "課程英文名稱": course_name_en,
                 "updated_at": datetime.utcnow()
             }
-            
+
             # Upsert course (update if exists, insert if new)
             result = courses_collection.update_one(
-                {"code": course_code},
+                {"科號": course_code},
                 {"$set": course_doc},
                 upsert=True
             )
@@ -1007,7 +1085,7 @@ def update_courses_from_nthu():
         print(f"❌ Error updating courses: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"Error updating courses: {str(e)}"}), 500
+        return jsonify({"error": "Error updating courses"}), 500
 
 
 @app.route("/update_profile", methods=["PUT"])
@@ -1019,29 +1097,27 @@ def update_profile():
         if not user_id:
             return jsonify({"error": "Not authenticated"}), 401
         
-        data = request.json
+        data = json_body()
         if not data:
             return jsonify({"error": "No data provided"}), 400
-        
+
         # Build update document with only allowed fields
         update_fields = {}
-        
+
         # Update courses if provided
         if "course_ids" in data:
             course_ids = data["course_ids"]
-            if not isinstance(course_ids, list):
-                return jsonify({"error": "course_ids must be a list"}), 400
-            update_fields["course_ids"] = course_ids
+            if not validate_course_ids(course_ids):
+                return jsonify({"error": "course_ids must be a list of up to 30 course codes"}), 400
+            update_fields["course_ids"] = list(dict.fromkeys(c.strip() for c in course_ids))
         
         # Update study spots if provided
         if "study_spots" in data:
             study_spots = data["study_spots"]
             if not isinstance(study_spots, list):
                 return jsonify({"error": "study_spots must be a list"}), 400
-            # Validate study spots against allowed values
-            for spot in study_spots:
-                if spot not in STUDY_SPOTS:
-                    return jsonify({"error": f"Invalid study spot: {spot}"}), 400
+            if any(spot not in STUDY_SPOTS for spot in study_spots):
+                return jsonify({"error": "Invalid study spot"}), 400
             update_fields["study_spots"] = study_spots
         
         # Update study times if provided
@@ -1049,10 +1125,8 @@ def update_profile():
             study_times = data["study_times"]
             if not isinstance(study_times, list):
                 return jsonify({"error": "study_times must be a list"}), 400
-            # Validate study times against allowed values
-            for time in study_times:
-                if time not in STUDY_TIMES:
-                    return jsonify({"error": f"Invalid study time: {time}"}), 400
+            if any(t not in STUDY_TIMES for t in study_times):
+                return jsonify({"error": "Invalid study time"}), 400
             update_fields["study_times"] = study_times
         
         if not update_fields:
@@ -1081,26 +1155,27 @@ def update_profile():
         
     except Exception as e:
         print(f"Error updating profile: {e}")
-        return jsonify({"error": f"Error updating profile: {str(e)}"}), 500
+        return jsonify({"error": "Error updating profile"}), 500
 
 
-# Error handlers
+# Error handlers (details are logged, never sent to the client)
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({"error": "Endpoint not found"}), 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return jsonify({"error": "Internal server error", "message": str(error)}), 500
+    return jsonify({"error": "Internal server error"}), 500
 
 @app.errorhandler(Exception)
 def handle_exception(error):
-    # Log the error for debugging
+    if isinstance(error, HTTPException):  # 400/405/415 etc. keep their own status
+        return jsonify({"error": error.name}), error.code
     print(f"Unhandled exception: {error}")
     import traceback
     traceback.print_exc()
-    return jsonify({"error": "An unexpected error occurred", "message": str(error)}), 500
+    return jsonify({"error": "An unexpected error occurred"}), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=os.getenv("FLASK_ENV") == "development")
+    app.run(host="0.0.0.0", port=port, debug=IS_DEV)
