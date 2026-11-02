@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useCourseNames, useCurrentUser } from '../hooks';
+import { fmtDay, fmtTime, fmtUntil } from '../utils';
 import { AppShell, Alert, Avatar, Icon, Loading, OverlapRing, overlapLabel, profileStrength } from './ui';
 
 // Same labels as the backend's STUDY_TIMES, in day order.
@@ -26,20 +27,11 @@ function sharedSummary(m) {
   return parts.length ? `Shares ${parts.join(', ')}` : 'Similar study habits';
 }
 
-function Kpi({ icon, label, value, sub }) {
-  return (
-    <div className="card kpi">
-      <div className="kpi-top">{label}<span className="kpi-icon"><Icon name={icon} size={15} /></span></div>
-      <div className="kpi-value">{value}</div>
-      <div className="kpi-sub">{sub}</div>
-    </div>
-  );
-}
-
 function Dashboard() {
   const { user, error: userError } = useCurrentUser();
   const [total, setTotal] = useState(null);
   const [matchState, setMatchState] = useState({ loading: true, matches: [], error: '' });
+  const [activity, setActivity] = useState(null);
 
   const sharedCodes = useMemo(() => matchState.matches.flatMap(m => m.shared_courses), [matchState.matches]);
   const [courseNames] = useCourseNames([...(user?.course_ids || []), ...sharedCodes]);
@@ -48,6 +40,7 @@ function Dashboard() {
   useEffect(() => {
     if (!user) return;
     api('/stats').then(d => setTotal(d.total_students)).catch(() => setTotal(null));
+    api('/activity').then(setActivity).catch(() => {});
     api('/get_matches')
       .then(d => setMatchState({ loading: false, matches: d.matches || [], error: '' }))
       .catch(err => setMatchState({ loading: false, matches: [], error: err.message }));
@@ -93,9 +86,38 @@ function Dashboard() {
         </section>
 
         <div className="kpis reveal reveal-1">
-          <Kpi icon="book" label="Courses" value={user.course_ids?.length || 0} sub="on your profile" />
-          <Kpi icon="users" label="Top matches" value={matchState.loading ? '–' : matchState.matches.length} sub="ranked for you" />
-          <Kpi icon="graduation" label="Classmates" value={others} sub="other students on StudyBuddy" />
+          <Link to={activity?.next_session ? `/sessions/${activity.next_session.id}` : '/sessions'} className="card kpi card-interactive" style={{ color: 'inherit', textDecoration: 'none' }}>
+            <div className="kpi-top">Next session<span className="kpi-icon"><Icon name="calendar" size={15} /></span></div>
+            {activity?.next_session ? (
+              <>
+                <div className="strong truncate" style={{ marginTop: 10, fontSize: 15 }}>{activity.next_session.title}</div>
+                <div className="kpi-sub">{fmtDay(activity.next_session.start_at)} · {fmtTime(activity.next_session.start_at)} · {fmtUntil(activity.next_session.start_at)}</div>
+              </>
+            ) : (
+              <>
+                <div className="kpi-value">–</div>
+                <div className="kpi-sub">Plan one from a chat</div>
+              </>
+            )}
+          </Link>
+          <Link to="/inbox" className="card kpi card-interactive" style={{ color: 'inherit', textDecoration: 'none' }}>
+            <div className="kpi-top">Requests<span className="kpi-icon"><Icon name="inbox" size={15} /></span></div>
+            <div className="kpi-value">{activity ? activity.incoming_requests : '–'}</div>
+            <div className="kpi-sub">{activity?.incoming_requests ? 'waiting for your reply' : 'no new requests'}</div>
+          </Link>
+          {activity?.needs_checkin ? (
+            <Link to="/sessions" className="card kpi card-interactive" style={{ color: 'inherit', textDecoration: 'none' }}>
+              <div className="kpi-top">Check-ins<span className="kpi-icon"><Icon name="check" size={15} /></span></div>
+              <div className="kpi-value">{activity.needs_checkin}</div>
+              <div className="kpi-sub">sessions to note how it went</div>
+            </Link>
+          ) : (
+            <Link to="/inbox" className="card kpi card-interactive" style={{ color: 'inherit', textDecoration: 'none' }}>
+              <div className="kpi-top">Unread chats<span className="kpi-icon"><Icon name="message" size={15} /></span></div>
+              <div className="kpi-value">{activity ? activity.unread_threads : '–'}</div>
+              <div className="kpi-sub">{others === '–' ? '' : `${others} other students on StudyBuddy`}</div>
+            </Link>
+          )}
         </div>
 
         <div className="dash-grid reveal reveal-2">
@@ -222,7 +244,7 @@ function Dashboard() {
               </div>
               <p className="muted small">
                 We compare your courses, study times and places with every other student. Shared courses count the most,
-                then times, then places. Your top three appear on the Matches page.
+                then times, then places. Your best matches appear on the Matches page.
               </p>
             </section>
           </div>

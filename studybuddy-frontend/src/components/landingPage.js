@@ -49,7 +49,7 @@ function AppMockup() {
                     {m.courses.map(c => <span key={c} className="chip chip-accent"><Icon name="book" size={12} />{c}</span>)}
                     <span className="chip"><Icon name="clock" size={12} />{m.time}</span>
                   </div>
-                  <div className="btn btn-secondary btn-sm btn-block" style={{ pointerEvents: 'none' }}><Icon name="mail" size={14} />Reach out</div>
+                  <div className="btn btn-secondary btn-sm btn-block" style={{ pointerEvents: 'none' }}><Icon name="send" size={14} />Connect</div>
                 </div>
               ))}
             </div>
@@ -192,7 +192,7 @@ function LandingPage() {
             <article className="card b-third" id="privacy">
               <div className="feat-icon"><Icon name="shield" size={17} /></div>
               <h3>Verified and private</h3>
-              <p>Only students with an NTHU email can join. Your email is only shown to students you're matched with.</p>
+              <p>Only students with an NTHU email can join. Your email is never shown to other students; you chat inside StudyBuddy.</p>
               <div className="visual" aria-hidden="true">
                 <div className="row" style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-subtle)', width: '100%' }}>
                   <Icon name="lock" size={15} className="subtle" />
@@ -222,8 +222,8 @@ function LandingPage() {
             </div>
             <div className="card">
               <span className="num">03</span>
-              <h3>Reach out to a match</h3>
-              <p>Send an introduction email from StudyBuddy. Replies go straight to your inbox.</p>
+              <h3>Connect, chat and meet up</h3>
+              <p>Send a request, chat once they accept, and plan a study session with a time, place and agenda.</p>
             </div>
           </div>
         </section>

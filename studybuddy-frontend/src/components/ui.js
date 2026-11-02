@@ -38,6 +38,14 @@ const ICONS = {
   layers: <><path d="m12 3.5 8.5 4.5-8.5 4.5L3.5 8z" /><path d="m3.5 12.2 8.5 4.5 8.5-4.5" /><path d="m3.5 16.3 8.5 4.5 8.5-4.5" /></>,
   zap: <path d="M13 2.5 4.5 13.5H12l-1 8 8.5-11H12z" />,
   graduation: <><path d="M2.5 9 12 4.5 21.5 9 12 13.5z" /><path d="M6.5 11v5c0 1.5 2.5 3 5.5 3s5.5-1.5 5.5-3v-5" /><path d="M21.5 9v5" /></>,
+  message: <><path d="M20.5 12a8 8 0 0 1-11.6 7.1L3.5 20.5l1.4-5.1A8 8 0 1 1 20.5 12z" /></>,
+  more: <><circle cx="5.5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="18.5" cy="12" r="1.2" /></>,
+  ban: <><circle cx="12" cy="12" r="8.8" /><path d="m5.8 5.8 12.4 12.4" /></>,
+  flag: <><path d="M5 21V4" /><path d="M5 4.5h11.5l-2 4 2 4H5" /></>,
+  link: <><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1" /><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1" /></>,
+  download: <><path d="M12 4v11" /><path d="m7 10.5 5 5 5-5" /><path d="M4.5 19.5h15" /></>,
+  inbox: <><path d="M3.5 13.5 6 5.5h12l2.5 8" /><path d="M3.5 13.5V18a1.5 1.5 0 0 0 1.5 1.5h14a1.5 1.5 0 0 0 1.5-1.5v-4.5h-5l-1.5 2.5h-5L7.5 13.5z" /></>,
+  trash: <><path d="M4.5 7h15" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 13h9l1-13" /></>,
   edit: <><path d="M4 20h4.2L19.4 8.8a2.1 2.1 0 0 0-3-3L5.2 17v3z" /><path d="m14.5 7.5 3 3" /></>,
 };
 
@@ -194,10 +202,40 @@ export const useToast = () => useContext(ToastContext);
    ========================================================================== */
 
 const NAV = [
-  { to: '/dashboard', label: 'Home', icon: 'home' },
-  { to: '/matches', label: 'Matches', icon: 'users' },
-  { to: '/edit-profile', label: 'Profile', icon: 'settings' },
+  { to: '/dashboard', label: 'Home', icon: 'home', tab: true },
+  { to: '/matches', label: 'Matches', icon: 'target', tab: true },
+  { to: '/inbox', label: 'Inbox', icon: 'message', tab: true, badge: 'inbox' },
+  { to: '/sessions', label: 'Sessions', icon: 'calendar', tab: true, badge: 'sessions' },
+  { to: '/groups', label: 'Groups', icon: 'users' },
+  { to: '/edit-profile', label: 'Profile', icon: 'settings', tab: true },
 ];
+
+/** Polls /activity for nav badges; refreshes on demand via the 'sb-activity' event. */
+export function useActivity() {
+  const [activity, setActivity] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => api('/activity').then(a => !cancelled && setActivity(a)).catch(() => {});
+    load();
+    const timer = setInterval(() => document.visibilityState === 'visible' && load(), 30000);
+    window.addEventListener('sb-activity', load);
+    window.addEventListener('focus', load);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener('sb-activity', load);
+      window.removeEventListener('focus', load);
+    };
+  }, []);
+  return activity;
+}
+
+function badgeCount(kind, activity) {
+  if (!activity) return 0;
+  if (kind === 'inbox') return activity.incoming_requests + activity.unread_threads;
+  if (kind === 'sessions') return activity.needs_checkin;
+  return 0;
+}
 
 /** How complete a profile is, for the sidebar meter. Simple, explainable rules. */
 export function profileStrength(user) {
@@ -209,9 +247,10 @@ export function profileStrength(user) {
   return Math.round(score);
 }
 
-export function AppShell({ user, matchCount, children }) {
+export function AppShell({ user, matchCount, children, bare }) {
   const navigate = useNavigate();
   const strength = profileStrength(user);
+  const activity = useActivity();
 
   async function logout() {
     try {
@@ -229,13 +268,17 @@ export function AppShell({ user, matchCount, children }) {
       <aside className="sidebar" aria-label="Sidebar">
         <Logo to="/dashboard" />
         <nav className="side-section" aria-label="Main">
-          {NAV.map(item => (
-            <NavLink key={item.to} to={item.to} className="side-link">
-              <Icon name={item.icon} size={17} />
-              {item.label}
-              {item.to === '/matches' && matchCount > 0 && <span className="count">{matchCount}</span>}
-            </NavLink>
-          ))}
+          {NAV.map(item => {
+            const n = badgeCount(item.badge, activity);
+            return (
+              <NavLink key={item.to} to={item.to} className="side-link">
+                <Icon name={item.icon} size={17} />
+                {item.label}
+                {n > 0 ? <span className="nav-badge" aria-label={`${n} new`}>{n}</span>
+                  : item.to === '/matches' && matchCount > 0 && <span className="count">{matchCount}</span>}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {user && strength < 100 && (
@@ -274,15 +317,21 @@ export function AppShell({ user, matchCount, children }) {
         </div>
       </header>
 
-      <main id="main" className="main">{children}</main>
+      <main id="main" className={`main${bare ? ' main-bare' : ''}`}>{children}</main>
 
       <nav className="tabbar" aria-label="Main">
-        {NAV.map(item => (
-          <NavLink key={item.to} to={item.to} className="tab">
-            <Icon name={item.icon} size={21} />
-            {item.label}
-          </NavLink>
-        ))}
+        {NAV.filter(i => i.tab).map(item => {
+          const n = badgeCount(item.badge, activity);
+          return (
+            <NavLink key={item.to} to={item.to} className="tab">
+              <span style={{ position: 'relative', display: 'inline-flex' }}>
+                <Icon name={item.icon} size={21} />
+                {n > 0 && <span className="tab-dot" aria-label={`${n} new`} />}
+              </span>
+              {item.label}
+            </NavLink>
+          );
+        })}
       </nav>
     </div>
   );
@@ -525,5 +574,73 @@ export function AuthLayout({ children, wide, topRight }) {
         </div>
       </aside>
     </div>
+  );
+}
+
+/* ==========================================================================
+   Menu (dropdown), segmented tabs, confirm dialog
+   ========================================================================== */
+
+export function Menu({ label = 'More actions', items, align = 'right' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = e => ref.current && !ref.current.contains(e.target) && setOpen(false);
+    const esc = e => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button type="button" className="btn btn-ghost btn-icon btn-sm" aria-label={label} aria-haspopup="menu"
+        aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <Icon name="more" size={18} />
+      </button>
+      {open && (
+        <div className={`menu menu-${align}`} role="menu">
+          {items.filter(Boolean).map(item => (
+            <button key={item.label} type="button" role="menuitem" className={`menu-item${item.danger ? ' danger' : ''}`}
+              onClick={() => { setOpen(false); item.onClick(); }}>
+              {item.icon && <Icon name={item.icon} size={15} />}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Segmented({ value, onChange, options, label }) {
+  return (
+    <div className="segmented" role="tablist" aria-label={label}>
+      {options.map(o => (
+        <button key={o.value} type="button" role="tab" aria-selected={value === o.value}
+          className={`seg${value === o.value ? ' on' : ''}`} onClick={() => onChange(o.value)}>
+          {o.label}
+          {o.count > 0 && <span className="seg-count">{o.count}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function ConfirmModal({ title, children, confirmLabel, danger, onConfirm, onClose, busy }) {
+  return (
+    <Modal title={title} onClose={onClose} footer={(
+      <>
+        <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="button" className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm} disabled={busy}>
+          {busy && <Spinner />}{confirmLabel}
+        </button>
+      </>
+    )}>
+      <div className="muted small">{children}</div>
+    </Modal>
   );
 }

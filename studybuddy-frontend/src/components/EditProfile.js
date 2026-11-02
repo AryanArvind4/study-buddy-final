@@ -90,7 +90,7 @@ function EditProfile() {
             </div>
             <div className="small" style={{ textAlign: 'right' }}>
               <div className="mono subtle">{user.email}</div>
-              <div className="subtle xs">Shown only to students you're matched with</div>
+              <div className="subtle xs">Private. Never shown to other students</div>
             </div>
           </div>
         </div>

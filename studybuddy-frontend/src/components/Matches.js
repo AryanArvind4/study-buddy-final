@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useCourseNames, useCurrentUser } from '../hooks';
-import { AppShell, Alert, Avatar, EmptyState, Icon, Modal, OverlapRing, PageHead, Spinner, overlapLabel, useToast } from './ui';
+import { refreshActivity } from '../utils';
+import {
+  AppShell, Alert, Avatar, EmptyState, Icon, Modal, OverlapRing, PageHead, Spinner, overlapLabel, useToast,
+} from './ui';
 
 function Reason({ icon, title, items, render = x => x, accent }) {
   return (
@@ -22,67 +25,43 @@ function Reason({ icon, title, items, render = x => x, accent }) {
   );
 }
 
-function emailTemplate(match, user, courseName) {
-  const lines = [];
-  if (match.shared_courses.length) lines.push(`- We're both taking ${match.shared_courses.map(courseName).join(', ')}`);
-  if (match.shared_spots.length) lines.push(`- We both like studying at ${match.shared_spots.join(', ')}`);
-  if (match.shared_times.length) lines.push(`- We're both usually free: ${match.shared_times.join(', ')}`);
-  return `Subject: Study partner? (via StudyBuddy)
-
-Hi ${match.name},
-
-I'm ${user.name} from ${user.department}. I found you on StudyBuddy and noticed we have a few things in common:
-${lines.join('\n') || '- Similar study habits'}
-
-Would you like to study together sometime? Let me know what time works for you.
-
-Thanks,
-${user.name}
-${user.email}`;
+function suggestedNote(match, courseName) {
+  if (match.shared_courses.length) {
+    return `Hi ${match.name.split(' ')[0]}! We're both taking ${courseName(match.shared_courses[0])}. Want to study together sometime?`;
+  }
+  return `Hi ${match.name.split(' ')[0]}! Looks like we have similar study habits. Want to study together sometime?`;
 }
 
-function ConnectModal({ match, user, courseName, onClose, onSent }) {
-  const [status, setStatus] = useState('idle'); // idle | sending | sent
+function RequestModal({ match, courseName, onClose, onSent }) {
+  const [note, setNote] = useState(() => suggestedNote(match, courseName));
+  const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
-  const [copied, setCopied] = useState('');
   const first = match.name.split(' ')[0];
-  const template = emailTemplate(match, user, courseName);
 
   async function send() {
     setStatus('sending');
     setError('');
     try {
-      await api('/send_partner_email', { method: 'POST', body: { partner_id: match.student_id } });
-      setStatus('sent');
-      onSent(first);
+      const d = await api('/connections', { method: 'POST', body: { user_id: match.student_id, note: note.trim() } });
+      refreshActivity();
+      onSent(match.student_id, d.connection);
+      onClose();
     } catch (err) {
       setError(err.message);
       setStatus('idle');
     }
   }
 
-  async function copy(text, what) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(what);
-      setTimeout(() => setCopied(''), 2000);
-    } catch {
-      setError('Could not copy automatically. Select the text and copy it manually.');
-    }
-  }
-
   return (
     <Modal
-      title={`Reach out to ${first}`}
-      description="We'll email a short introduction. Replies go straight to your inbox."
+      title={`Connect with ${first}`}
+      description={`If ${first} accepts, you can chat and plan sessions on StudyBuddy. Email addresses stay private.`}
       onClose={onClose}
-      footer={status === 'sent' ? (
-        <button type="button" className="btn btn-secondary" onClick={onClose}>Done</button>
-      ) : (
+      footer={(
         <>
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={send} disabled={status === 'sending'}>
-            {status === 'sending' ? <><Spinner /> Sending…</> : <><Icon name="send" size={15} />Send introduction</>}
+            {status === 'sending' ? <><Spinner /> Sending…</> : <><Icon name="send" size={15} />Send request</>}
           </button>
         </>
       )}
@@ -96,54 +75,46 @@ function ConnectModal({ match, user, courseName, onClose, onSent }) {
           </div>
           <OverlapRing similarity={match.similarity} size={40} stroke={4} />
         </div>
-
-        {status === 'sent' ? (
-          <Alert type="success">Introduction sent. {first} can reply to you at {user.email}.</Alert>
-        ) : (
-          <div className="email-preview" aria-label="Email preview">
-            <div className="ep-head">
-              <div><b>To:</b> {match.name}</div>
-              <div><b>Reply-to:</b> {user.email}</div>
-              <div><b>Subject:</b> Study Partner Request from {user.name}</div>
-            </div>
-            <div className="ep-body">
-              Hi {first}! <span className="strong" style={{ color: 'var(--text)' }}>{user.name}</span> from {user.department} found
-              your profile on StudyBuddy and would like to study together.
-              {match.shared_courses.length > 0 && <> You're both taking <span className="strong" style={{ color: 'var(--text)' }}>{match.shared_courses.map(courseName).join(', ')}</span>.</>}
-            </div>
-          </div>
-        )}
+        <div>
+          <label className="label" htmlFor="req-note">Add a note <span className="subtle">(optional)</span></label>
+          <textarea id="req-note" className="textarea" maxLength={300} value={note} onChange={e => setNote(e.target.value)} />
+          <div className="counter">{note.length}/300</div>
+        </div>
         <Alert>{error}</Alert>
-
-        <details className="disclosure">
-          <summary><Icon name="chevronRight" size={14} />Prefer to write it yourself?</summary>
-          <div className="stack" style={{ marginTop: 14 }}>
-            <div>
-              <label className="label" htmlFor="match-email">Their email</label>
-              <div className="copy-row">
-                <input id="match-email" className="input" value={match.email} readOnly />
-                <button type="button" className="btn btn-secondary" onClick={() => copy(match.email, 'email')}>
-                  <Icon name={copied === 'email' ? 'check' : 'copy'} size={15} />{copied === 'email' ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-            </div>
-            <div>
-              <div className="between" style={{ marginBottom: 6 }}>
-                <label className="label" htmlFor="match-template" style={{ margin: 0 }}>Message template</label>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(template, 'template')}>
-                  <Icon name={copied === 'template' ? 'check' : 'copy'} size={14} />{copied === 'template' ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-              <textarea id="match-template" className="template" value={template} readOnly />
-            </div>
-          </div>
-        </details>
       </div>
     </Modal>
   );
 }
 
-function MatchCard({ match, courseName, onReach, featured }) {
+function ConnectButton({ match, onRequest, block }) {
+  const navigate = useNavigate();
+  const c = match.connection;
+  const cls = `btn ${block ? 'btn-block ' : ''}`;
+  if (c?.status === 'accepted') {
+    return (
+      <button type="button" className={`${cls}btn-primary`} onClick={() => navigate(`/inbox/connection/${c.connection_id}`)}>
+        <Icon name="message" size={15} />Message
+      </button>
+    );
+  }
+  if (c?.status === 'pending' && c.direction === 'outgoing') {
+    return <button type="button" className={`${cls}btn-secondary`} disabled><Icon name="clock" size={15} />Request sent</button>;
+  }
+  if (c?.status === 'pending' && c.direction === 'incoming') {
+    return (
+      <button type="button" className={`${cls}btn-primary`} onClick={() => navigate('/inbox')}>
+        <Icon name="inbox" size={15} />Respond to request
+      </button>
+    );
+  }
+  return (
+    <button type="button" className={`${cls}${block ? 'btn-secondary' : 'btn-primary'}`} onClick={() => onRequest(match)}>
+      <Icon name="send" size={15} />Connect
+    </button>
+  );
+}
+
+function MatchCard({ match, courseName, onRequest, featured }) {
   const label = overlapLabel(match.similarity);
   const reasons = (
     <>
@@ -168,12 +139,8 @@ function MatchCard({ match, courseName, onReach, featured }) {
             <h2 id={`m-${match.student_id}`} style={{ fontSize: 22, marginTop: 4 }}>{match.name}</h2>
             <p className="muted small">{match.department}</p>
           </div>
-          <div className="stack" style={{ gap: 14 }}>{reasons}</div>
-          <div className="row-sm wrap">
-            <button type="button" className="btn btn-primary" onClick={() => onReach(match)}>
-              <Icon name="send" size={15} />Reach out to {match.name.split(' ')[0]}
-            </button>
-          </div>
+          <div className="stack">{reasons}</div>
+          <div className="row-sm wrap"><ConnectButton match={match} onRequest={onRequest} /></div>
         </div>
       </article>
     );
@@ -192,11 +159,7 @@ function MatchCard({ match, courseName, onReach, featured }) {
         <span className={`badge badge-${label.tone}`}>{label.short}</span>
       </div>
       <div className="mc-body">{reasons}</div>
-      <div className="mc-foot">
-        <button type="button" className="btn btn-secondary btn-block" onClick={() => onReach(match)}>
-          <Icon name="send" size={15} />Reach out
-        </button>
-      </div>
+      <div className="mc-foot"><ConnectButton match={match} onRequest={onRequest} block /></div>
     </article>
   );
 }
@@ -208,33 +171,41 @@ function Matches() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
 
-  useEffect(() => {
-    if (!user) return;
+  const load = useCallback(() => {
     api('/get_matches')
       .then(d => setMatches(d.matches || []))
       .catch(err => {
         setError(err.message);
         setMatches([]);
       });
-  }, [user]);
+  }, []);
+
+  useEffect(() => {
+    if (user) load();
+  }, [user, load]);
 
   const sharedCodes = useMemo(() => (matches || []).flatMap(m => m.shared_courses), [matches]);
   const [courseNames] = useCourseNames(sharedCodes);
   const courseName = code => courseNames[code] || code;
+
+  function onSent(studentId, connection) {
+    setMatches(ms => ms.map(m => (m.student_id === studentId
+      ? { ...m, connection: { status: 'pending', direction: 'outgoing', connection_id: connection.id } }
+      : m)));
+    toast(`Request sent to ${connection.other.name.split(' ')[0]}`);
+  }
 
   let content;
   if (userError || error) {
     content = <Alert>{userError || error}</Alert>;
   } else if (!user || matches === null) {
     content = (
-      <div aria-busy="true">
-        <div className="card match-feature">
-          <div className="skeleton" style={{ width: 128, height: 128, borderRadius: '50%' }} />
-          <div className="stack">
-            <div className="skeleton" style={{ height: 22, width: '40%' }} />
-            <div className="skeleton" style={{ height: 14, width: '60%' }} />
-            <div className="skeleton" style={{ height: 70 }} />
-          </div>
+      <div className="card match-feature" aria-busy="true">
+        <div className="skeleton" style={{ width: 128, height: 128, borderRadius: '50%' }} />
+        <div className="stack">
+          <div className="skeleton" style={{ height: 22, width: '40%' }} />
+          <div className="skeleton" style={{ height: 14, width: '60%' }} />
+          <div className="skeleton" style={{ height: 70 }} />
         </div>
       </div>
     );
@@ -250,7 +221,7 @@ function Matches() {
     const [best, ...rest] = matches;
     content = (
       <>
-        <MatchCard match={best} courseName={courseName} onReach={setSelected} featured />
+        <MatchCard match={best} courseName={courseName} onRequest={setSelected} featured />
         {rest.length > 0 && (
           <>
             <div className="between" style={{ margin: '28px 0 14px' }}>
@@ -258,7 +229,7 @@ function Matches() {
               <span className="subtle small">{rest.length} more</span>
             </div>
             <div className="match-grid">
-              {rest.map(m => <MatchCard key={m.student_id} match={m} courseName={courseName} onReach={setSelected} />)}
+              {rest.map(m => <MatchCard key={m.student_id} match={m} courseName={courseName} onRequest={setSelected} />)}
             </div>
           </>
         )}
@@ -276,9 +247,8 @@ function Matches() {
         />
         {content}
       </div>
-      {selected && user && (
-        <ConnectModal match={selected} user={user} courseName={courseName} onClose={() => setSelected(null)}
-          onSent={first => toast(`Introduction sent to ${first}`)} />
+      {selected && (
+        <RequestModal match={selected} courseName={courseName} onClose={() => setSelected(null)} onSent={onSent} />
       )}
     </AppShell>
   );

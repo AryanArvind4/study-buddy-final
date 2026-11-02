@@ -19,6 +19,8 @@ import secrets
 import threading
 import requests
 
+from social import init_social
+
 load_dotenv()
 
 IS_DEV = os.getenv("FLASK_ENV") == "development"
@@ -51,7 +53,6 @@ db = client[DB_NAME]
 students_collection = db["students"]
 courses_collection = db["courses"]
 otp_collection = db["otps"]
-partner_email_log = db["partner_email_log"]
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -349,11 +350,11 @@ def is_valid_nthu_email(email):
     return email.endswith('.nthu.edu.tw')
 
 
+MATCH_LIMIT = 6
 OTP_TTL = timedelta(minutes=10)
 OTP_MAX_ATTEMPTS = 5            # wrong guesses allowed per code
 OTP_RESEND_COOLDOWN = timedelta(seconds=60)
 OTP_MAX_SENDS_PER_HOUR = 5
-PARTNER_EMAILS_PER_DAY = 10
 
 
 def json_body():
@@ -839,7 +840,9 @@ def get_matches(student_id=None):
         if not all_courses:
             return jsonify({"error": "No course data available"}), 400
 
-        others = list(students_collection.find({"_id": {"$ne": ObjectId(student_id)}}))
+        me_oid = ObjectId(student_id)
+        hidden = social.blocked_ids(me_oid) | {me_oid}
+        others = list(students_collection.find({"_id": {"$nin": list(hidden)}}, {"email": 0}))
         if not others:
             return jsonify({"message": "No other students available", "matches": []}), 200
 
@@ -852,8 +855,7 @@ def get_matches(student_id=None):
                 {
                     "student_id": str(student["_id"]),
                     "name": student["name"],
-                    "email": student["email"],
-                    "department": student["department"],
+                    "department": student.get("department", ""),
                     "similarity": round(similarity * 100, 1),
                     "shared_courses": list(set(target.get("course_ids", [])) & set(student.get("course_ids", []))),
                     "shared_spots": list(set(target.get("study_spots", [])) & set(student.get("study_spots", []))),
@@ -861,167 +863,14 @@ def get_matches(student_id=None):
                 }
             )
         matches.sort(key=lambda x: x["similarity"], reverse=True)
-        top_matches = matches[:3]
+        top_matches = matches[:MATCH_LIMIT]
+        states = social.connection_states(me_oid, [ObjectId(m["student_id"]) for m in top_matches])
+        for m in top_matches:
+            m["connection"] = states.get(ObjectId(m["student_id"]))
         return jsonify({"target_student": target["name"], "matches": top_matches, "total_checked": len(others)})
     except Exception as e:
         print(f"Error computing matches: {e}")
         return jsonify({"error": "Error computing matches"}), 500
-
-
-@app.route("/send_partner_email", methods=["POST"])
-@login_required
-def send_partner_email():
-    """Send an email to a potential study partner"""
-    try:
-        user_id = session.get("user_id")
-        if not user_id:
-            return jsonify({"error": "Not authenticated"}), 401
-        
-        # Get the current user
-        current_user = students_collection.find_one({"_id": ObjectId(user_id)})
-        if not current_user:
-            return jsonify({"error": "User not found"}), 404
-        
-        # The recipient is looked up by ID on the server, so this endpoint can only
-        # email registered students, never an arbitrary address.
-        partner_oid = parse_object_id(get_str(json_body(), "partner_id", 40))
-        partner = students_collection.find_one({"_id": partner_oid}) if partner_oid else None
-        if not partner:
-            return jsonify({"error": "Study partner not found"}), 404
-        if partner["_id"] == current_user["_id"]:
-            return jsonify({"error": "You can't send a request to yourself"}), 400
-
-        now = datetime.utcnow()
-        day_ago = now - timedelta(days=1)
-        if partner_email_log.count_documents({"sender_id": current_user["_id"], "sent_at": {"$gt": day_ago}}) >= PARTNER_EMAILS_PER_DAY:
-            return jsonify({"error": "You've reached today's limit of partner requests. Try again tomorrow."}), 429
-        if partner_email_log.find_one({"sender_id": current_user["_id"], "recipient_id": partner["_id"], "sent_at": {"$gt": day_ago}}):
-            return jsonify({"error": "You already contacted this student in the last 24 hours."}), 429
-
-        partner_email = partner["email"]
-        partner_name = partner.get("name", "there")
-
-        # Shared items come from the database, not from the request.
-        def shared(field):
-            return sorted(set(current_user.get(field, [])) & set(partner.get(field, [])))
-        shared_courses = shared("course_ids")
-        shared_spots = shared("study_spots")
-        shared_times = shared("study_times")
-
-        # Format shared items for email
-        shared_courses_str = ", ".join(shared_courses) if shared_courses else "various courses"
-        shared_spots_str = ", ".join(shared_spots) if shared_spots else "study locations"
-        shared_times_str = ", ".join(shared_times) if shared_times else "study times"
-
-        # Build email content
-        sender_name = current_user.get("name", "A fellow student")
-        sender_email = current_user.get("email", "")
-        sender_department = current_user.get("department", "")
-
-        subject = f"🎓 Study Partner Request from {sender_name} - StudyBuddy"
-
-        # HTML-escaped copies for the HTML body (user-entered text must not become markup)
-        h_partner_name = html.escape(partner_name)
-        h_sender_name = html.escape(sender_name)
-        h_sender_department = html.escape(sender_department)
-
-        # Build the shared items section
-        shared_items_html = ""
-        if shared_courses:
-            shared_items_html += f"<li><strong>Shared Courses:</strong> {html.escape(shared_courses_str)}</li>"
-        if shared_spots:
-            shared_items_html += f"<li><strong>Preferred Study Spots:</strong> {html.escape(shared_spots_str)}</li>"
-        if shared_times:
-            shared_items_html += f"<li><strong>Available Study Times:</strong> {html.escape(shared_times_str)}</li>"
-        
-        html_body = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-                <h1 style="color: white; margin: 0; font-size: 28px;">📚 StudyBuddy</h1>
-                <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Study Partner Connection</p>
-            </div>
-            
-            <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
-                <h2 style="color: #1f2937; margin-top: 0;">Hi {h_partner_name}! 👋</h2>
-
-                <p style="font-size: 16px;">
-                    <strong>{h_sender_name}</strong> from <strong>{h_sender_department}</strong> found your profile on StudyBuddy and would like to connect with you as a study partner!
-                </p>
-                
-                <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #6366f1;">🤝 What You Have in Common:</h3>
-                    <ul style="margin: 0; padding-left: 20px;">
-                        {shared_items_html if shared_items_html else "<li>Similar academic interests and study preferences</li>"}
-                    </ul>
-                </div>
-                
-                <p style="font-size: 16px;">
-                    {h_sender_name} thinks you'd be great study partners! You could help each other with coursework, prepare for exams, or just have productive study sessions together.
-                </p>
-                
-                <div style="background: #eff6ff; padding: 15px; border-radius: 8px; border-left: 4px solid #6366f1; margin: 20px 0;">
-                    <p style="margin: 0; font-size: 14px;">
-                        <strong>💬 To respond:</strong> Simply reply to this email to get in touch with {h_sender_name}!
-                    </p>
-                </div>
-                
-                <p style="color: #6b7280; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-                    This message was sent via <strong>StudyBuddy</strong> - the study partner matching platform for NTHU students.<br>
-                    <a href="https://studybuddynthu.org" style="color: #6366f1;">studybuddynthu.org</a>
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        plain_body = f"""
-Hi {partner_name}!
-
-{sender_name} from {sender_department} found your profile on StudyBuddy and would like to connect with you as a study partner!
-
-What You Have in Common:
-- Shared Courses: {shared_courses_str}
-- Preferred Study Spots: {shared_spots_str}
-- Available Study Times: {shared_times_str}
-
-{sender_name} thinks you'd be great study partners! You could help each other with coursework, prepare for exams, or just have productive study sessions together.
-
-To respond: Simply reply to this email to get in touch with {sender_name}!
-
----
-This message was sent via StudyBuddy - the study partner matching platform for NTHU students.
-https://studybuddynthu.org
-        """
-        
-        # Send the email
-        try:
-            msg = Message(
-                subject=subject,
-                recipients=[partner_email],
-                body=plain_body,
-                html=html_body,
-                reply_to=sender_email  # KEY: Replies go to the sender, not StudyBuddy
-            )
-            mail.send(msg)
-            partner_email_log.insert_one({
-                "sender_id": current_user["_id"],
-                "recipient_id": partner["_id"],
-                "sent_at": now,
-            })
-
-            print("✅ Partner email sent")
-            return jsonify({
-                "message": "Email sent successfully! Your study partner will receive your connection request."
-            }), 200
-
-        except Exception as email_error:
-            print(f"❌ Error sending partner email: {email_error}")
-            return jsonify({"error": "Failed to send email. Please try again later."}), 500
-
-    except Exception as e:
-        print(f"Error in send_partner_email: {e}")
-        return jsonify({"error": "Error sending email. Please try again later."}), 500
 
 
 @app.route("/update_courses_from_nthu", methods=["POST"])
@@ -1169,6 +1018,36 @@ def update_profile():
     except Exception as e:
         print(f"Error updating profile: {e}")
         return jsonify({"error": "Error updating profile"}), 500
+
+
+def send_email(to, subject, html_body, text_body):
+    """Send a notification email in the background. In development without mail
+    credentials it is only printed."""
+    if IS_DEV and (not os.getenv("MAIL_USERNAME") or not os.getenv("MAIL_PASSWORD")):
+        print(f"📧 [DEV ONLY] Email to {to}: {subject}", flush=True)
+        return
+
+    def worker():
+        try:
+            with app.app_context():
+                mail.send(Message(subject=subject, recipients=[to], html=html_body, body=text_body))
+        except Exception as e:
+            print(f"❌ Notification email failed: {type(e).__name__}", flush=True)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+SITE_URL = os.getenv("SITE_URL", "http://localhost:3000" if IS_DEV else "https://studybuddynthu.org").rstrip("/")
+
+social = init_social(
+    app, db,
+    login_required=login_required,
+    json_body=json_body,
+    get_str=get_str,
+    parse_object_id=parse_object_id,
+    send_email=send_email,
+    site_url=SITE_URL,
+)
 
 
 # Error handlers (details are logged, never sent to the client)

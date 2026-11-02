@@ -7,6 +7,9 @@ import Dashboard from './components/Dashboard';
 import Matches from './components/Matches';
 import EditProfile from './components/EditProfile';
 import { ToastProvider } from './components/ui';
+import Inbox from './components/Inbox';
+import { Sessions, SessionDetail } from './components/Sessions';
+import { Groups } from './components/Groups';
 
 function App() {
   return (
@@ -19,6 +22,12 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/matches" element={<Matches />} />
         <Route path="/edit-profile" element={<EditProfile />} />
+        <Route path="/inbox" element={<Inbox />} />
+        <Route path="/inbox/:type/:id" element={<Inbox />} />
+        <Route path="/sessions" element={<Sessions />} />
+        <Route path="/sessions/:id" element={<SessionDetail />} />
+        <Route path="/groups" element={<Groups />} />
+        <Route path="/join/:code" element={<Groups />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>

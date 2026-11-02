@@ -205,7 +205,7 @@ function Register() {
                   selected={form.study_times} onChange={v => update('study_times', v)} />
                 <FieldError>{errors.study_times}</FieldError>
               </div>
-              <p className="hint">Classmates see your name, department, courses and these preferences. Your email is only shown to students you're matched with.</p>
+              <p className="hint">Classmates see your name, department, courses and these preferences. Your email stays private.</p>
             </>
           )}
 
