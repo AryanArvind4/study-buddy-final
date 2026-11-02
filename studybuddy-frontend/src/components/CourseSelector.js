@@ -99,14 +99,11 @@ function CourseSelector({ id = 'courses', value, onChange, names = {}, onNamesCh
   return (
     <div ref={wrapperRef}>
       <div className="combo">
-        <div style={{ position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 12, top: 13, color: 'var(--text-subtle)' }}>
-            <Icon name="search" size={18} />
-          </span>
+        <div className="input-icon">
+          <Icon name="search" size={16} />
           <input
             id={id}
             className="input"
-            style={{ paddingLeft: 38 }}
             type="text"
             role="combobox"
             aria-expanded={expanded}
@@ -128,7 +125,7 @@ function CourseSelector({ id = 'courses', value, onChange, names = {}, onNamesCh
         {expanded && (
           <ul className="combo-list" id={listId} role="listbox">
             {searching && options.length === 0 && (
-              <li className="combo-option muted small" role="status">Searching…</li>
+              <li className="combo-status" role="status">Searching…</li>
             )}
             {options.map((o, i) => (
               <li key={o.code} role="option" id={`${id}-opt-${i}`} aria-selected={active === i}>
@@ -140,8 +137,10 @@ function CourseSelector({ id = 'courses', value, onChange, names = {}, onNamesCh
                   onClick={() => choose(i)}
                 >
                   <span className="code">{o.code}</span>
-                  <span className="name">{o.label}</span>
-                  {o.sub && <span className="code">{o.sub}</span>}
+                  <span className="grow">
+                    <span className="name truncate">{o.label}</span>
+                    {o.sub && <span className="sub truncate">{o.sub}</span>}
+                  </span>
                 </button>
               </li>
             ))}
@@ -154,10 +153,11 @@ function CourseSelector({ id = 'courses', value, onChange, names = {}, onNamesCh
                   onMouseDown={e => e.preventDefault()}
                   onClick={() => add(trimmed, trimmed)}
                 >
-                  <span className="name" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <Icon name="plus" size={15} /> Add “{trimmed}”
+                  <span className="code" style={{ display: 'grid', placeItems: 'center', width: 26, padding: 0, height: 22 }}><Icon name="plus" size={13} /></span>
+                  <span className="grow">
+                    <span className="name">Add “{trimmed}”</span>
+                    <span className="sub">Can't find it? Add the course by name.</span>
                   </span>
-                  <span className="code">Can't find it? Add the course by name.</span>
                 </button>
               </li>
             )}
@@ -166,9 +166,10 @@ function CourseSelector({ id = 'courses', value, onChange, names = {}, onNamesCh
       </div>
 
       {value.length > 0 ? (
-        <ul className="chips" style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }} aria-label="Selected courses">
+        <ul className="chips" style={{ marginTop: 12 }} aria-label="Selected courses">
           {value.map(code => (
             <li key={code} className="chip chip-accent">
+              <Icon name="book" size={13} />
               <span className="chip-text" title={names[code] ? `${code} · ${names[code]}` : code}>
                 {names[code] && names[code] !== code ? names[code] : code}
               </span>
@@ -178,13 +179,13 @@ function CourseSelector({ id = 'courses', value, onChange, names = {}, onNamesCh
                 onClick={() => remove(code)}
                 aria-label={`Remove ${names[code] || code}`}
               >
-                <Icon name="x" size={12} strokeWidth={2.4} />
+                <Icon name="x" size={12} strokeWidth={2.2} />
               </button>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="hint">No courses added yet.</p>
+        <p className="hint">No courses added yet. Search above, or type a name and press Enter.</p>
       )}
     </div>
   );

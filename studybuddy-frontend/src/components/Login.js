@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, isValidNthuEmail } from '../api';
 import OTPVerification from './OTPVerification';
-import { AuthLayout, Alert, Spinner } from './ui';
+import { AuthLayout, FieldError, Icon, Alert, Spinner } from './ui';
 
 function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
+  const [fieldError, setFieldError] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState('email'); // 'email' | 'otp'
@@ -15,8 +16,9 @@ function Login() {
   async function sendCode(e) {
     e.preventDefault();
     setError('');
+    setFieldError('');
     if (!isValidNthuEmail(email)) {
-      setError('Use your NTHU email address (ending in .nthu.edu.tw).');
+      setFieldError('Use your NTHU email address (ending in .nthu.edu.tw).');
       return;
     }
     setLoading(true);
@@ -59,34 +61,30 @@ function Login() {
   }
 
   return (
-    <AuthLayout>
-      <div className="card">
-        <h1>Log in</h1>
-        <p className="lead">We'll email you a one-time code. No password needed.</p>
-        <form onSubmit={sendCode} noValidate>
-          <div className="stack">
-            <Alert>{error}</Alert>
-            <div className="field">
-              <label className="label" htmlFor="email">NTHU email</label>
-              <input
-                id="email"
-                className="input"
-                type="email"
-                autoComplete="email"
-                placeholder="you@gapp.nthu.edu.tw"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                aria-invalid={!!error}
-              />
+    <AuthLayout topRight={<Link to="/register" className="btn btn-ghost btn-sm">Sign up</Link>}>
+      <h1>Welcome back</h1>
+      <p className="lead">Log in with your NTHU email. We'll send you a one-time code.</p>
+      <form onSubmit={sendCode} noValidate>
+        <div className="stack">
+          <Alert>{error}</Alert>
+          <div>
+            <label className="label" htmlFor="email">School email</label>
+            <div className="input-icon">
+              <Icon name="mail" size={16} />
+              <input id="email" className="input" type="email" autoComplete="email" autoFocus
+                placeholder="you@gapp.nthu.edu.tw" value={email}
+                onChange={e => { setEmail(e.target.value); setFieldError(''); }}
+                aria-invalid={!!fieldError} aria-describedby="email-err" />
             </div>
-            <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={loading}>
-              {loading ? <><Spinner /> Sending code…</> : 'Email me a code'}
-            </button>
+            <FieldError id="email-err">{fieldError}</FieldError>
           </div>
-        </form>
-      </div>
-      <p className="auth-footer">
-        New to StudyBuddy? <Link to="/register">Create a profile</Link>
+          <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={loading}>
+            {loading ? <><Spinner /> Sending code…</> : <>Continue with email <Icon name="arrowRight" size={16} /></>}
+          </button>
+        </div>
+      </form>
+      <p className="subtle small" style={{ marginTop: 24, textAlign: 'center' }}>
+        New to StudyBuddy? <Link to="/register">Create an account</Link>
       </p>
     </AuthLayout>
   );

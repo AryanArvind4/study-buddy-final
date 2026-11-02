@@ -6,9 +6,11 @@ import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Matches from './components/Matches';
 import EditProfile from './components/EditProfile';
+import { ToastProvider } from './components/ui';
 
 function App() {
   return (
+    <ToastProvider>
     <Router>
       <Routes>
         <Route path="/" element={<LandingPage />} />
@@ -20,6 +22,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
+    </ToastProvider>
   );
 }
 

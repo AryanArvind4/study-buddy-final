@@ -4,6 +4,76 @@ import { AuthLayout, Alert, Icon, Spinner } from './ui';
 
 const RESEND_SECONDS = 60; // matches the backend's resend cooldown
 const CODE_LIFETIME = 600;
+const LENGTH = 6;
+
+function OtpInput({ value, onChange, onComplete, disabled }) {
+  const refs = useRef([]);
+  const digits = Array.from({ length: LENGTH }, (_, i) => value[i] || '');
+
+  useEffect(() => {
+    refs.current[0]?.focus();
+  }, []);
+
+  function setAt(index, char) {
+    const next = digits.slice();
+    next[index] = char;
+    const joined = next.join('').slice(0, LENGTH);
+    onChange(joined);
+    if (joined.length === LENGTH) onComplete?.(joined);
+  }
+
+  function handleChange(index, e) {
+    const raw = e.target.value.replace(/\D/g, '');
+    if (!raw) return;
+    if (raw.length > 1) {
+      // Pasted or autofilled several digits at once.
+      const filled = (digits.slice(0, index).join('') + raw).slice(0, LENGTH);
+      onChange(filled);
+      refs.current[Math.min(filled.length, LENGTH - 1)]?.focus();
+      if (filled.length === LENGTH) onComplete?.(filled);
+      return;
+    }
+    setAt(index, raw);
+    if (index < LENGTH - 1) refs.current[index + 1]?.focus();
+  }
+
+  function handleKeyDown(index, e) {
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      if (digits[index]) {
+        onChange(value.slice(0, index) + value.slice(index + 1));
+      } else if (index > 0) {
+        onChange(value.slice(0, index - 1) + value.slice(index));
+        refs.current[index - 1]?.focus();
+      }
+    } else if (e.key === 'ArrowLeft' && index > 0) {
+      refs.current[index - 1]?.focus();
+    } else if (e.key === 'ArrowRight' && index < LENGTH - 1) {
+      refs.current[index + 1]?.focus();
+    }
+  }
+
+  return (
+    <div className="otp-group" role="group" aria-label="6-digit verification code">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={el => (refs.current[i] = el)}
+          className={`otp-box${d ? ' filled' : ''}`}
+          inputMode="numeric"
+          autoComplete={i === 0 ? 'one-time-code' : 'off'}
+          maxLength={i === 0 ? LENGTH : 1}
+          value={d}
+          disabled={disabled}
+          aria-label={`Digit ${i + 1}`}
+          onChange={e => handleChange(i, e)}
+          onKeyDown={e => handleKeyDown(i, e)}
+          onFocus={e => e.target.select()}
+        />
+      ))}
+    </div>
+  );
+}
 
 function OTPVerification({ email, onVerified, onBack, purpose = 'registration', busy = false, error: outerError = '' }) {
   const [otp, setOtp] = useState('');
@@ -12,10 +82,8 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration', 
   const [notice, setNotice] = useState('');
   const [sentAt, setSentAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
-  const inputRef = useRef(null);
 
   useEffect(() => {
-    inputRef.current?.focus();
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -25,22 +93,20 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration', 
   const expiresIn = Math.max(0, CODE_LIFETIME - elapsed);
   const working = loading || busy;
 
-  async function verify(e) {
-    e.preventDefault();
+  async function verify(code = otp) {
     setError('');
     setNotice('');
-    if (otp.length !== 6) {
-      setError('Enter the 6-digit code from your email.');
+    if (code.length !== LENGTH) {
+      setError('Enter all 6 digits from your email.');
       return;
     }
     setLoading(true);
     try {
-      await api('/verify_otp', { method: 'POST', body: { email, otp } });
+      await api('/verify_otp', { method: 'POST', body: { email, otp: code } });
       onVerified();
     } catch (err) {
       setError(err.message);
       setOtp('');
-      inputRef.current?.focus();
     } finally {
       setLoading(false);
     }
@@ -55,7 +121,7 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration', 
       setSentAt(Date.now());
       setNow(Date.now());
       setOtp('');
-      setNotice('We sent a new code. Older codes no longer work.');
+      setNotice('New code sent. Earlier codes no longer work.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -68,53 +134,39 @@ function OTPVerification({ email, onVerified, onBack, purpose = 'registration', 
 
   return (
     <AuthLayout>
-      <div className="card">
-        <div className="icon-circle"><Icon name="mail" size={22} /></div>
-        <h1>Check your email</h1>
-        <p className="lead">
-          We sent a 6-digit code to <strong style={{ color: 'var(--text)' }}>{email}</strong>.
-          {purpose === 'registration' ? ' Enter it to create your account.' : ' Enter it to log in.'}
-        </p>
+      <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: -10, marginBottom: 20 }} onClick={onBack}>
+        <Icon name="arrowLeft" size={15} /> Use a different email
+      </button>
+      <div className="empty-icon" style={{ margin: '0 0 20px' }}><Icon name="mail" size={22} /></div>
+      <h1>Check your inbox</h1>
+      <p className="lead">
+        Enter the 6-digit code we sent to <span className="strong" style={{ color: 'var(--text)' }}>{email}</span>.
+      </p>
 
-        <form onSubmit={verify} noValidate>
-          <div className="stack">
-            <Alert>{outerError || error}</Alert>
-            <Alert type="success">{notice}</Alert>
-            <div className="field">
-              <label className="label" htmlFor="otp">Verification code</label>
-              <input
-                id="otp"
-                ref={inputRef}
-                className="input input-otp"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9]*"
-                maxLength={6}
-                placeholder="••••••"
-                value={otp}
-                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                aria-describedby="otp-hint"
-              />
-              <span id="otp-hint" className="hint">
-                {expiresIn > 0 ? `Code expires in ${mm}:${ss}. You have 5 tries.` : 'This code has expired. Request a new one.'}
-              </span>
-            </div>
-            <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={working || otp.length !== 6}>
-              {working ? <><Spinner /> Checking…</> : purpose === 'registration' ? 'Verify and create account' : 'Verify and log in'}
-            </button>
+      <form onSubmit={e => { e.preventDefault(); verify(); }} noValidate>
+        <div className="stack">
+          <OtpInput value={otp} onChange={setOtp} onComplete={code => !working && verify(code)} disabled={working} />
+          <div className="between xs subtle">
+            <span>{expiresIn > 0 ? `Expires in ${mm}:${ss}` : 'Code expired'}</span>
+            <span>5 attempts per code</span>
           </div>
-        </form>
-
-        <div className="row-between" style={{ marginTop: 20 }}>
-          <button type="button" className="btn btn-ghost" onClick={onBack}>
-            <Icon name="arrowLeft" size={16} /> Change email
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={resend} disabled={working || resendIn > 0}>
-            {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+          <Alert>{outerError || error}</Alert>
+          <Alert type="success">{notice}</Alert>
+          <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={working || otp.length !== LENGTH}>
+            {working ? <><Spinner /> Verifying…</> : purpose === 'registration' ? 'Verify and create account' : 'Verify and log in'}
           </button>
         </div>
-      </div>
-      <p className="auth-footer">Can't find it? Check your spam folder.</p>
+      </form>
+
+      <p className="subtle small" style={{ marginTop: 24, textAlign: 'center' }}>
+        Didn't get it? Check spam, or{' '}
+        {resendIn > 0 ? (
+          <span>resend in <span className="mono">{resendIn}s</span></span>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-sm" style={{ padding: '0 4px', height: 'auto', color: 'var(--accent-text)' }}
+            onClick={resend} disabled={working}>resend the code</button>
+        )}
+      </p>
     </AuthLayout>
   );
 }
