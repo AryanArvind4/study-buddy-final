@@ -18,6 +18,42 @@ function Section({ id, title, description, children }) {
   );
 }
 
+function BlockedList() {
+  const toast = useToast();
+  const [blocked, setBlocked] = useState(null);
+
+  useEffect(() => {
+    api('/blocks').then(d => setBlocked(d.blocked)).catch(() => setBlocked([]));
+  }, []);
+
+  async function unblock(person) {
+    try {
+      await api(`/blocks/${person.id}`, { method: 'DELETE' });
+      setBlocked(list => list.filter(p => p.id !== person.id));
+      toast(`${person.name} unblocked`);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  if (blocked === null) return <div className="skeleton" style={{ height: 40 }} />;
+  if (blocked.length === 0) return <span className="none">You haven't blocked anyone.</span>;
+  return (
+    <div className="card" style={{ padding: '4px 16px' }}>
+      {blocked.map(p => (
+        <div key={p.id} className="person-row">
+          <Avatar name={p.name} />
+          <div className="grow">
+            <div className="small strong truncate">{p.name}</div>
+            <div className="subtle xs truncate">{p.department}</div>
+          </div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => unblock(p)}>Unblock</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EditProfile() {
   const toast = useToast();
   const { user, setUser, error: userError } = useCurrentUser();
@@ -110,6 +146,10 @@ function EditProfile() {
         <Section id="s-title" title="Study spots" description="Places on and around campus where you like to study.">
           <PillGroup legend="Study spots" name="study_spots" options={options.study_spots}
             selected={form.study_spots} onChange={v => update('study_spots', v)} />
+        </Section>
+
+        <Section id="b-title" title="Blocked students" description="Blocked students can't message you, send requests or see you in matches.">
+          <BlockedList />
         </Section>
 
         <Section id="a-title" title="Appearance" description="Choose light or dark, or follow your device.">
